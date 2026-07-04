@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.8
+// @version      1.0.9
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       (your name)
 // @match        https://www.patreon.com/*
@@ -7788,8 +7788,13 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       // saved before new moods were added would otherwise shadow the freshly-connected full folder, so only
       // the previously-cached moods showed images.) Requires CONFIRMED read permission — otherwise the handle
       // rejects and we must fall through to the IndexedDB cache below instead of returning blank cards.
+      // Resolve the mood-folder handle FLEXIBLY so a mis-structured download still works (user report 2026-07-04):
+      //   A. <connected>/<Character>/<folder>             — the intended layout (parent holds the character folders)
+      //   B. <connected>/<Character>/<Character>/<folder> — Windows "Extract All" DOUBLES the folder (Frieren/Frieren/…)
+      //   C. <connected>/<folder>                         — the patron connected a SINGLE character's folder directly
       return _moodDir.getDirectoryHandle(character)
-        .then(function (cd) { return cd.getDirectoryHandle(folder); })
+        .then(function (cd) { return cd.getDirectoryHandle(folder).catch(function () { return cd.getDirectoryHandle(character).then(function (cd2) { return cd2.getDirectoryHandle(folder); }); }); })   // A, then B (doubled folder)
+        .catch(function () { return _moodDir.getDirectoryHandle(folder); })   // C: the connected folder IS the character folder
         .then(function (md) {
           // Try each extension in turn — webp first (the patron's metadata-stripped format), then png/jpg.
           var tryExt = function (k) {
@@ -9058,7 +9063,11 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     // of the run's images, via effMoods so force/limit/default modes are honoured):
     //   Rule 1 — dark-expression images may fill AT MOST HALF of all images.
     //   Rule 2 — happy-expression images must be AT LEAST HALF the dark ones.
-    // After-sex (aftermath) happy moods are NOT counted toward the happy tally.
+    // WEIGHTING (user 2026-07-04): SOLO sections (scene_type solo_*, i.e. solo intro + solo tease) count
+    // at HALF — their images still count, but facial expressions matter less there than in the partnered
+    // parts. After-sex (aftermath) HAPPY moods DO count toward the happy tally (a story's happy ending
+    // should count); aftermath DARK moods count at HALF (only their exhausted first half renders as the
+    // dark face). The ~25-image narrative intro is NOT a section, so it is never counted.
     // EXEMPTION (user 2026-07-04): the creator's own UNEDITED default mood arc always exports —
     // the gate only applies once the PATRON has actually changed the MOODS themselves. Editing
     // anything else (character, clothing, positions, section widths, partners) still exports.
@@ -9072,14 +9081,15 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     });
     var darkShare = 0, happyShare = 0, totalShare = 0;
     ST.sections.forEach(function (s) {
-      totalShare += (+s.percent || 0);
+      var _soloW = ((s.scene_type || '').indexOf('solo') === 0) ? 0.5 : 1;   // solo intro/tease sections count HALF (user 2026-07-04): they still count, but facial expressions matter less there than in the partnered parts
+      totalShare += (+s.percent || 0) * _soloW;
       var ms = effMoods(s);
       if (!ms.length) return;
-      var per = (+s.percent || 0) / ms.length;
+      var per = (+s.percent || 0) / ms.length * _soloW;
       var isAfter = (s.scene_type || '').indexOf('aftermath') >= 0;
       ms.forEach(function (m) {
         if (V2TONE[m] === 'dark') darkShare += isAfter ? per * 0.5 : per;   // #20: the GUI renders only the exhausted first half of an aftermath as the dark face; the smiling second half is forced to happy-end moods, so a dark aftermath mood counts for ~half its share
-        else if (V2TONE[m] === 'happy' && !isAfter) happyShare += per;
+        else if (V2TONE[m] === 'happy') happyShare += per;   // aftermath happy moods now count too (user 2026-07-04) — the happy ending counts toward the tally
       });
     });
     if (_moodsEdited && totalShare > 0 && darkShare > totalShare * 0.5 + 1e-6) {
@@ -9103,15 +9113,16 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     normalizeSections(-1);
     var perMood = {}, perHappyCount = {}, used = {}, darkShare = 0, happyShare = 0, totalShare = 0;
     ST.sections.forEach(function (s) {
-      totalShare += (+s.percent || 0);
+      var _soloW = ((s.scene_type || '').indexOf('solo') === 0) ? 0.5 : 1;   // solo sections count HALF (mirror validate())
+      totalShare += (+s.percent || 0) * _soloW;
       var ms = effMoods(s); if (!ms.length) return;
-      var per = (+s.percent || 0) / ms.length;
+      var per = (+s.percent || 0) / ms.length * _soloW;
       var isAfter = (s.scene_type || '').indexOf('aftermath') >= 0;
       ms.forEach(function (m) {
         used[m] = true;
         perMood[m] = (perMood[m] || 0) + per;
         if (V2TONE[m] === 'dark') darkShare += isAfter ? per * 0.5 : per;   // #20: mirror validate() — a dark aftermath mood renders happy for its smiling second half
-        else if (V2TONE[m] === 'happy' && !isAfter) { happyShare += per; perHappyCount[m] = (perHappyCount[m] || 0) + per; }
+        else if (V2TONE[m] === 'happy') { happyShare += per; perHappyCount[m] = (perHappyCount[m] || 0) + per; }   // aftermath happy moods now count too (user 2026-07-04) — mirror validate()
       });
     });
     var target = darkShare * 0.5;        // rule 2: happy must reach this
