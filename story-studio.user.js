@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.11
+// @version      1.0.12
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       (your name)
 // @match        https://www.patreon.com/*
@@ -6315,6 +6315,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
 
   function openStudio() {
     applyThumbScale();   // apply the saved thumbnail size to :root before anything renders
+    try { fetchPatronIdentity(); } catch (e) {}   // populate the patron's Patreon identity (soft-gate fallback) so the export is tagged with who they are
     overlay = el('div', { class: 'sst-ov', onclick: function (e) { if (e.target === overlay && _mdTarget === overlay) closeStudio(); } });
     var modal = el('div', { class: 'sst-modal' });
     var langSel = el('select', { class: 'sst-sel', 'data-notr': '1', title: 'Language',
@@ -9025,6 +9026,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     return {
       save_type: 'fresh', save_name: ST.story + ' — Patron Custom', saved_at: new Date().toISOString(),
       schema_version: 1, based_on_story: ST.story, based_on_story_version: 'v2',
+      patron: _patronIdentity || null,   // WHO exported this — Patreon {id, name, vanity} — so the creator never mixes up requests (id matches the members-CSV "User ID")
       custom_sections: sections, fresh_prompt_defaults: fpd
     };
   }
@@ -9233,7 +9235,8 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     var data = buildExport();
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
-    var a = el('a', { href: url, download: ST.story.replace(/[^a-z0-9]+/gi, '_') + '_patron_custom.json' });
+    var _who = (data.patron && data.patron.name) ? '__' + String(data.patron.name).replace(/[^a-z0-9]+/gi, '_').slice(0, 40) : '';   // tag the filename with the patron so the creator's downloads self-organize
+    var a = el('a', { href: url, download: ST.story.replace(/[^a-z0-9]+/gi, '_') + '_patron_custom' + _who + '.json' });
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
   }
@@ -9340,15 +9343,30 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   }
 
   // ====================================================== GATING + LAUNCH
+  // ── Patron identity (user 2026-07-05): tag each export with WHO made it, so the creator never mixes up
+  //    requests. Read from Patreon's OWN /api/current_user (same endpoint the access gate uses). The Patreon
+  //    numeric user id is the stable key that matches the creator's members-CSV "User ID" column.
+  var _patronIdentity = null;
+  function _capturePatron(j) {
+    try { var u = (j && j.data) || {}, ua = u.attributes || {}; if (u.id) _patronIdentity = { id: String(u.id), name: String(ua.full_name || ua.vanity || '').trim(), vanity: String(ua.vanity || '') }; } catch (e) {}
+  }
+  function fetchPatronIdentity() {   // populate _patronIdentity once (covers the soft-gate path where checkAccess doesn't fetch)
+    if (_patronIdentity || typeof GM_xmlhttpRequest !== 'function') return;
+    try {
+      GM_xmlhttpRequest({ method: 'GET', url: 'https://www.patreon.com/api/current_user?fields[user]=full_name,vanity&json-api-version=1.0',
+        onload: function (r) { try { _capturePatron(JSON.parse(r.responseText)); } catch (e) {} }, onerror: function () {} });
+    } catch (e) {}
+  }
   function checkAccess(cb) {
     if (!HARD_GATE) { cb(true, 'soft'); return; }
     try {
       GM_xmlhttpRequest({
         method: 'GET',
-        url: 'https://www.patreon.com/api/current_user?include=pledges.campaign&fields[pledge]=amount_cents&fields[campaign]=name&json-api-version=1.0',
+        url: 'https://www.patreon.com/api/current_user?include=pledges.campaign&fields[user]=full_name,vanity&fields[pledge]=amount_cents&fields[campaign]=name&json-api-version=1.0',
         onload: function (resp) {
           try {
             var j = JSON.parse(resp.responseText); var inc = j.included || [];
+            _capturePatron(j);   // grab the patron's identity from the same call
             var ok = inc.some(function (o) { if (o.type !== 'pledge') return false; var cid = (((o.relationships || {}).campaign || {}).data || {}).id; var amt = (o.attributes || {}).amount_cents || 0; return cid === CREATOR_CAMPAIGN_ID && amt > 0; });
             cb(ok, ok ? 'verified' : 'not-patron');
           } catch (e) { cb(true, 'error'); }
