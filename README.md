@@ -13,4 +13,4 @@ Once installed, you're on the auto-update track:
 * When you open **Story Studio**, if a newer version exists you'll see a
   **"🔔 A new version is available"** banner — click **Update now** and confirm the install.
 
-Current version: **v1.0.1**
+Current version: **v1.0.14**
