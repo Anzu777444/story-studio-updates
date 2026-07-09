@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.15
+// @version      1.0.16
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -5557,7 +5557,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   // Online submit (Cloudflare Worker inbox). The "📨 Send to creator" button only appears
   // once SUBMIT_ENDPOINT is set to the deployed Worker URL; until then patrons use export/copy.
   var SUBMIT_ENDPOINT = 'https://story-studio-inbox.pixyies.workers.dev';   // creator's deployed Cloudflare Worker (KV inbox)
-  var SUBMIT_TOKEN = '';           // SECURITY: never ship a bearer secret in a public userscript — the Worker authenticates the request itself (kept as a var only for backward reference)
+  var SUBMIT_TOKEN = 'Rv7lgkrFE4tVbnORJGoWNv6XTEadqxgEYUQplz-PmEw';           // REQUIRED by the deployed Worker (public-by-design: write-only, CANNOT read the inbox). Do NOT blank this — the Worker 401s every submission without it.
   function _submitConfigured() { return SUBMIT_ENDPOINT.indexOf('CHANGE-ME') < 0 && /^https:\/\/[^ ]+\.workers\.dev/.test(SUBMIT_ENDPOINT); }
 
   // ---- tiny DOM + storage helpers ----------------------------------------
@@ -9305,7 +9305,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     var body;
     try {
       body = JSON.stringify({
-        // token removed: don't transmit a shipped secret; the Worker validates the request on its own
+        token: SUBMIT_TOKEN,
         patron_id: (data.patron && data.patron.id) || '',
         display_name: (data.patron && data.patron.name) || '',
         story: data.based_on_story || '',
@@ -9314,7 +9314,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     } catch (e) { done('error'); return; }
     try {
       GM_xmlhttpRequest({
-        method: 'POST', url: SUBMIT_ENDPOINT.replace(/\/+$/, '') + '/submit', data: body, timeout: 20000,   // hit the Worker's /submit route (bare endpoint returns 410); trim any trailing slash first
+        method: 'POST', url: SUBMIT_ENDPOINT, data: body, timeout: 20000,
         headers: { 'Content-Type': 'application/json' },
         onload: function (r) {
           var ok = false, err = '';
