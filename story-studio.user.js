@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.14
+// @version      1.0.15
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
-// @author       (your name)
+// @author       Anzu777
 // @match        https://www.patreon.com/*
 // @match        https://patreon.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 // @connect      www.patreon.com
 // @connect      patreon.com
 // @connect      raw.githubusercontent.com
-// @connect      workers.dev
+// @connect      story-studio-inbox.pixyies.workers.dev
 // @updateURL    https://raw.githubusercontent.com/Anzu777444/story-studio-updates/main/story-studio.meta.js
 // @downloadURL  https://raw.githubusercontent.com/Anzu777444/story-studio-updates/main/story-studio.user.js
 // ==/UserScript==
@@ -5557,7 +5557,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   // Online submit (Cloudflare Worker inbox). The "📨 Send to creator" button only appears
   // once SUBMIT_ENDPOINT is set to the deployed Worker URL; until then patrons use export/copy.
   var SUBMIT_ENDPOINT = 'https://story-studio-inbox.pixyies.workers.dev';   // creator's deployed Cloudflare Worker (KV inbox)
-  var SUBMIT_TOKEN = 'Rv7lgkrFE4tVbnORJGoWNv6XTEadqxgEYUQplz-PmEw';           // must match the Worker's SUBMIT_TOKEN secret
+  var SUBMIT_TOKEN = '';           // SECURITY: never ship a bearer secret in a public userscript — the Worker authenticates the request itself (kept as a var only for backward reference)
   function _submitConfigured() { return SUBMIT_ENDPOINT.indexOf('CHANGE-ME') < 0 && /^https:\/\/[^ ]+\.workers\.dev/.test(SUBMIT_ENDPOINT); }
 
   // ---- tiny DOM + storage helpers ----------------------------------------
@@ -5903,9 +5903,9 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   }
   function applyDraft(d) {
     if (!d || d.story !== ST.story) return;
-    ['character', 'breastSize', 'hair', 'maturity', 'extraDesc', 'maleDefault', 'scene_setting', 'defaultClothing', 'sideNotes'].forEach(function (k) { if (d[k] != null) ST[k] = d[k]; });
+    ['character', 'breastSize', 'hair', 'maturity', 'extraDesc', 'maleDefault', 'scene_setting', 'defaultClothing', 'sideNotes'].forEach(function (k) { if (d[k] != null) ST[k] = clampText(d[k]); });   // #29: length-bound draft-restored free text (matches importInto)
     if (d.controls) Object.keys(d.controls).forEach(function (k) { ST.controls[k] = d.controls[k]; });
-    if (d.arc) ST.arc = d.arc;
+    if (Array.isArray(d.arc)) ST.arc = d.arc;   // guard: a non-array (hand-edited draft) must not replace the arc rows
     if (typeof d.balanceAll === 'boolean') ST.balanceAll = d.balanceAll;
     if (d.narrativeFrom != null) ST.narrativeFrom = d.narrativeFrom;   // borrowed-setting choice (null/absent = keep own)
     if (Array.isArray(d.clothing) && d.clothing.length) ST.clothing = d.clothing;
@@ -7045,7 +7045,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       // to a custom set seeded with the story's own moods, so the patron can just add to them.
       box.appendChild(el('button', { class: 'sst-btn sm', style: { marginTop: '6px' }, onclick: function () {
         if (s.moodMode !== 'limit') { s.moodMode = 'limit'; if (!s.moods.length) s.moods = s.defMoods.slice(); }
-        pickFromPool('Add a mood', isSolo ? soloMoodPool() : V2M, V2MD, isSolo ? s.moods.filter(function (m) { return !isPartnerKissMood(m); }) : s.moods, function (chosen) { s.moods = chosen; _reconcileMoodWeights(s); saveDraft(); redraw(); }, MOOD_GROUPS, { used: V2MU, isnew: V2MN, train: V2MT, review: V2REVIEW });
+        pickFromPool('Add a mood', isSolo ? soloMoodPool() : V2M, V2MD, isSolo ? s.moods.filter(function (m) { return !isPartnerKissMood(m); }) : s.moods, function (chosen) { if (!chosen || !chosen.length) { popInfo(t('Keep at least one mood in this part — an empty list would quietly fall back to the story’s full default set.')); return; } s.moods = chosen; _reconcileMoodWeights(s); saveDraft(); redraw(); }, MOOD_GROUPS, { used: V2MU, isnew: V2MN, train: V2MT, review: V2REVIEW });
       } }, ['+ Add a mood']));
     }
     redraw();
@@ -7301,7 +7301,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       // ── moods ──
       card.appendChild(el('div', { class: 'sst-sf-lbl', text: t('Moods') }));
       var mlist = (s.moodMode === 'force') ? (s.forceMood ? [s.forceMood] : []) : (s.moodMode === 'limit' ? s.moods : s.defMoods);
-      itemsRow('mood', mlist, (s.moodMode === 'limit'), function (name) { return function () { s.moods = s.moods.filter(function (x) { return x !== name; }); if (s.moodWeights) delete s.moodWeights[name]; saveDraft(); rebuild(); }; }, t('none yet — drag a mood here'));
+      itemsRow('mood', mlist, (s.moodMode === 'limit'), function (name) { return function () { if (s.moodMode === 'limit' && s.moods.length <= 1) { popInfo(t('Keep at least one mood in this part — an empty list would quietly fall back to the story’s full default set.')); return; } s.moods = s.moods.filter(function (x) { return x !== name; }); if (s.moodWeights) delete s.moodWeights[name]; saveDraft(); rebuild(); }; }, t('none yet — drag a mood here'));
       if (s.moodMode === 'default') card.appendChild(el('div', { class: 'hint', style: { fontSize: '10px' }, text: t('using the story’s moods — drop one to start your own set') }));
       else if (s.moodMode === 'force') card.appendChild(el('div', { class: 'hint', style: { fontSize: '10px' }, text: t('forced to one mood — drop a mood to switch to a custom set') }));
       // ── positions (Option A: creator-defaults + patron-added, each removable; removing a default excludes it from this part) ──
@@ -9037,6 +9037,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     Object.keys(ST.controls).forEach(function (k) { fpd[k] = ST.controls[k]; });
     if (ST.controls.partner_mode === 'custom_arc') {
       var rows = arcWidths();
+      if (!rows.length) rows = [{ _n: 100, type: '1man', male: '', bg: '' }];   // every stretch was 0-width → export one full-length default so the arc isn't silently empty
       fpd.partner_arc_config = rows.map(function (r) { return r._n + ':' + r.type; }).join(', ');
       fpd.partner_arc_male_overrides = rows.map(function (r) { return r.male || ''; });
       fpd.partner_arc_bg_overrides = rows.map(function (r) { return r.bg || ''; });
@@ -9304,7 +9305,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     var body;
     try {
       body = JSON.stringify({
-        token: SUBMIT_TOKEN,
+        // token removed: don't transmit a shipped secret; the Worker validates the request on its own
         patron_id: (data.patron && data.patron.id) || '',
         display_name: (data.patron && data.patron.name) || '',
         story: data.based_on_story || '',
@@ -9313,7 +9314,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     } catch (e) { done('error'); return; }
     try {
       GM_xmlhttpRequest({
-        method: 'POST', url: SUBMIT_ENDPOINT, data: body, timeout: 20000,
+        method: 'POST', url: SUBMIT_ENDPOINT.replace(/\/+$/, '') + '/submit', data: body, timeout: 20000,   // hit the Worker's /submit route (bare endpoint returns 410); trim any trailing slash first
         headers: { 'Content-Type': 'application/json' },
         onload: function (r) {
           var ok = false, err = '';
@@ -9350,12 +9351,28 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     if (sc && typeof sc === 'object') { ST.character = clampText(sc.name); ST.hair = clampText(sc.hair); ST.breastSize = clampText(sc.breastSize); ST.maturity = clampText(sc.maturity); ST.extraDesc = clampText(sc.extraDesc); ST.defaultClothing = clampText(sc.defaultClothing); }
     else if (fpd.character) ST.character = clampText(fpd.character);          // older export → whole blob into the name box (#29: length-bounded)
     ST.maleDefault = clampText(fpd.male_character || ST.maleDefault);
-    ST.scene_setting = fpd.scene_setting || ST.scene_setting;
+    ST.scene_setting = clampText(fpd.scene_setting) || ST.scene_setting;   // #29: length-bound imported free text (matches maleDefault/sideNotes)
     ST.sideNotes = clampText(fpd.studio_side_notes || ST.sideNotes);
     if (typeof fpd.studio_narrative_from === 'string' && fpd.studio_narrative_from) ST.narrativeFrom = fpd.studio_narrative_from;   // restore borrowed-setting choice on re-import (export key is studio_narrative_from)
-    Object.keys(ST.controls).forEach(function (k) { if (fpd[k] !== undefined) ST.controls[k] = fpd[k]; });
+    // Validate every imported control rather than trusting the file blindly:
+    // partner_mode must be a known mode; toggles coerce to bool; every numeric dial is clamped to its
+    // slider range (or [0,100]) so a hand-edited 1e400 / NaN / out-of-range value can't poison generation.
+    var _varSpec = {}; VARIATION.forEach(function (s) { if (s.key) _varSpec[s.key] = s; });
+    var _pmodes = {}; PARTNER_MODES.forEach(function (p) { _pmodes[p.v] = 1; });
+    Object.keys(ST.controls).forEach(function (k) {
+      if (fpd[k] === undefined) return;
+      var v = fpd[k];
+      if (k === 'partner_mode') { if (_pmodes[v]) ST.controls[k] = v; return; }   // drop an unknown mode → keep the current one
+      var spec = _varSpec[k];
+      if (spec && spec.type === 'toggle') { ST.controls[k] = !!v; return; }
+      if (spec && spec.type === 'slider') { ST.controls[k] = clamp(v, spec.min, spec.max); return; }
+      if (typeof ST.controls[k] === 'boolean') { ST.controls[k] = !!v; return; }
+      if (typeof ST.controls[k] === 'number') { ST.controls[k] = clamp(v, 0, 100); return; }   // mix % + pov_face_lo/hi etc.
+      ST.controls[k] = v;
+    });
     if (fpd.partner_arc_config) {
-      var rows = String(fpd.partner_arc_config).split(',').map(function (p) { var m = p.trim().split(':'); return { pct: clamp(m[0], 0, 100), type: (m[1] || '1man').trim() }; });
+      var _arcOk = {}; ARC_TYPES.forEach(function (a) { _arcOk[a.v] = 1; });   // #29: only accept a known arc type; an unknown type would fall through the generator to no partner tags
+      var rows = String(fpd.partner_arc_config).split(',').map(function (p) { var m = p.trim().split(':'); var ty = (m[1] || '1man').trim(); return { pct: clamp(m[0], 0, 100), type: _arcOk[ty] ? ty : '1man' }; });
       var males = fpd.partner_arc_male_overrides || [], bgs = fpd.partner_arc_bg_overrides || [];
       while (rows.length < 4) rows.push({ pct: 0, type: '1man' });
       ST.arc = rows.slice(0, 4).map(function (r, i) { return { pct: r.pct, type: r.type, male: males[i] || '', bg: bgs[i] || '' }; });
@@ -9454,10 +9471,15 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   // (character, sliders, moods, positions, notes…) makes a NEW entry. Fingerprints BOTH
   // custom_sections AND fresh_prompt_defaults by content — not just length — so an equal-length
   // edit (e.g. 'silver hair'→'golden hair', DP% 25→30) is still detected as different.
+  function _msHash(str) {   // FNV-1a 32-bit over the WHOLE string — cheap, no truncation, so tail edits can't collide
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; }
+    return h.toString(36);
+  }
   function _msSig(data) {
     try {
       var cs = JSON.stringify(data.custom_sections || []), fpd = JSON.stringify(data.fresh_prompt_defaults || {});
-      return (cs.length + fpd.length) + ':' + cs.slice(0, 3000) + '|' + fpd.slice(0, 3000);
+      return (cs.length + fpd.length) + ':' + _msHash(cs) + '|' + _msHash(fpd);   // hash the full payload (was a 3000-char prefix slice → collisions on long, tail-differing stories)
     } catch (e) { return 's' + Math.random(); }
   }
   function _msDefaultLabel(data) {
