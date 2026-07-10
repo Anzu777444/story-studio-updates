@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.17
+// @version      1.0.18
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -5881,7 +5881,14 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       sections: sections, controls: freshControls(), arc: blankArc(), sideNotes: '', clothing: buildDefaultClothing(),
       balanceAll: false,  // OFF = a resize pulls from the neighbour / pinned part; ON = spread evenly across every other part
       narrativeFrom: null, // null = keep THIS story's own setting/atmosphere; else the name of another story whose setting the GUI borrows
-      storyIntro: null     // null = no extra intro; else the NAME of a standalone story-intro (D.story_intros) PREPENDED to the front — character-agnostic, unaffiliated with any story
+      // Cinematic intro(s): a self-contained, character-agnostic opener (D.story_intros) placed in the
+      // normal story-intro slot (between the solo intro and the solo tease), NOT the raw front.
+      //   first       = name of the lead intro (narrative slot) or null (= use the story's own intro)
+      //   second      = name of an optional 2nd intro or null
+      //   mode        = 'both' (keep the story's own intro too) | 'only' (cinematic replaces the story's own)
+      //   secondPlace = 'after' | 'before' (the 2nd intro relative to the solo tease)
+      // first=null → nothing exported → an unedited story stays byte-identical.
+      intros: { first: null, second: null, mode: 'both', secondPlace: 'after' }
     };
     if (!skipDraft) {                          // Reset-to-defaults passes skipDraft=true to ignore the saved draft
       var draft = gv('draft_' + name, null);
@@ -5896,7 +5903,12 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       character: ST.character, breastSize: ST.breastSize, hair: ST.hair, maturity: ST.maturity, extraDesc: ST.extraDesc,
       maleDefault: ST.maleDefault, scene_setting: ST.scene_setting, defaultClothing: ST.defaultClothing, sideNotes: ST.sideNotes,
       controls: ST.controls, arc: ST.arc, clothing: ST.clothing, balanceAll: !!ST.balanceAll, narrativeFrom: ST.narrativeFrom || null,
-      storyIntro: ST.storyIntro || null,
+      intros: {
+        first: (ST.intros && ST.intros.first) || null,
+        second: (ST.intros && ST.intros.second) || null,
+        mode: (ST.intros && ST.intros.mode === 'only') ? 'only' : 'both',
+        secondPlace: (ST.intros && ST.intros.secondPlace === 'before') ? 'before' : 'after'
+      },
       sections: ST.sections.map(function (s) {
         return { scene_type: s.scene_type, percent: s.percent, moodMode: s.moodMode, moods: s.moods,
           forceMood: s.forceMood, addPositions: s.addPositions, excludePositions: s.excludePositions, pos_add: s.pos_add, neg_add: s.neg_add, note: s.note, moodWeights: s.moodWeights || {}, collapsed: s.collapsed, touched: s.touched, inserted: !!s.inserted };
@@ -5910,7 +5922,21 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     if (Array.isArray(d.arc)) ST.arc = d.arc.map(function (r) { r = r || {}; var _ty = (r.type || '1man'); if (!ARC_TYPES.some(function (a) { return a.v === _ty; })) _ty = '1man'; return { pct: clamp(r.pct, 0, 100), type: _ty, male: clampText(r.male || ''), bg: clampText(r.bg || '') }; });
     if (typeof d.balanceAll === 'boolean') ST.balanceAll = d.balanceAll;
     if (d.narrativeFrom != null) ST.narrativeFrom = d.narrativeFrom;   // borrowed-setting choice (null/absent = keep own)
-    if (typeof d.storyIntro === 'string' && d.storyIntro) ST.storyIntro = d.storyIntro;   // standalone story-intro choice (absent/null/'' = none, so an unedited draft leaves ST.storyIntro at its null default → byte-identical export)
+    // Cinematic intro(s): new object form {first,second,mode,secondPlace}. An unedited draft has
+    // first=null so ST.intros stays at its default → byte-identical export. Legacy drafts carry a
+    // single `storyIntro` NAME string → map it to the lead intro (mode 'both', narrative slot).
+    if (d.intros && typeof d.intros === 'object' && !Array.isArray(d.intros)) {
+      var _di = d.intros;
+      ST.intros = {
+        first: (typeof _di.first === 'string' && _di.first) ? _di.first : null,
+        second: (typeof _di.second === 'string' && _di.second) ? _di.second : null,
+        mode: (_di.mode === 'only') ? 'only' : 'both',
+        secondPlace: (_di.secondPlace === 'before') ? 'before' : 'after'
+      };
+      if (!ST.intros.first) { ST.intros.second = null; ST.intros.mode = 'both'; }   // no first → no second/mode
+    } else if (typeof d.storyIntro === 'string' && d.storyIntro) {
+      ST.intros = { first: d.storyIntro, second: null, mode: 'both', secondPlace: 'after' };
+    }
     if (Array.isArray(d.clothing) && d.clothing.length) ST.clothing = d.clothing;
     // Inserted-section reconstruction (Feature 2): a draft that carries patron-inserted sections is
     // LONGER than the creator's base arc, so the plain 1:1 index-map below would drop the extras. When
@@ -6523,7 +6549,6 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     bodyEl.appendChild(cardClothing());
     bodyEl.appendChild(cardPartners());
     bodyEl.appendChild(cardNarrativeFrom());
-    bodyEl.appendChild(cardStoryIntros());
     bodyEl.appendChild(cardSections());
     bodyEl.appendChild(cardVariation());
     bodyEl.appendChild(cardNotes());
@@ -6666,11 +6691,18 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   // backdrop, moods, clothing, positions and character. Lists stories by friendly NAME only
   // (grouped by category); never reads or shows any tags. The GUI resolves the chosen name to
   // that story's intro blocks internally at generation time (only when narrative is enabled).
+  // The "📖 Story narrative" card = everything about your story's OPENING, in one place:
+  //   (1) Borrow another story's intro  (ST.narrativeFrom — swaps which story's opening/setting is used)
+  //   (2) Cinematic intro(s)            (ST.intros — self-contained, character-agnostic action openers
+  //       from D.story_intros, placed in the normal story-intro slot; 1 or 2, with order + placement +
+  //       a "keep the story's own intro too / cinematic only" mode). Never reads or shows any tags —
+  //       the GUI resolves each NAME to its authored beats internally.
   function cardNarrativeFrom() {
     var c = el('div', { class: 'sst-card' }, [
-      el('h2', {}, [t('📖 Story narrative '), qmark(t('Every story opens with a short intro — a roughly 30-image mini story-progression (arriving at the place, stepping inside, settling in) that sets the mood before the main scenes begin. By default this story uses its OWN intro. Pick a different story here to borrow ITS intro instead. Only that opening changes — the rest of your story (parts, moods, clothing, character and all the scenes) stays exactly the same.'))]),
-      el('p', { class: 'hint', text: t('Keep this story’s own intro, or borrow another story’s opening sequence. Only the ~30-image intro changes — everything else stays the same.') })
+      el('h2', {}, [t('📖 Story narrative '), qmark(t('Your story’s opening. Every story starts with a short intro that plays in the opening slot — between the solo intro and the solo tease. Here you can keep this story’s own intro, borrow another story’s opening, or open with a standalone CINEMATIC intro (or two) — an action / spectacle lead-in unaffiliated with any story. Whatever you choose, an opening always plays, and everything else about your story (parts, moods, clothing, character and all the scenes) stays exactly as you set it.'))]),
+      el('p', { class: 'hint', text: t('Choose what plays as your story’s opening — keep its own intro, borrow another story’s, or add a cinematic intro (or two).') })
     ]);
+    // ── (1) Borrow another story's intro ──
     var sel = el('select', { class: 'sst-sel', style: { maxWidth: '380px' } });
     sel.appendChild(el('option', { value: '', text: t('⭐ Keep this story’s own intro (default)') }));
     var byCat = {};
@@ -6686,41 +6718,81 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     });
     sel.value = ST.narrativeFrom || '';
     sel.addEventListener('change', function () { ST.narrativeFrom = sel.value || null; saveDraft(); });
-    c.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Borrow another story’s intro'), t('Optional. Pick a story whose opening / arrival sequence you like better — only the ~30-image intro changes; everything else about YOUR story stays the same.'), sel)]));
-    return c;
-  }
-  // ── STANDALONE story-intro picker ─────────────────────────────────────────
-  // Deliberately DISTINCT from "📖 Story narrative" above: these are self-contained, character-agnostic
-  // cinematic OPENINGS (dragon riders, desperate last stands, DBZ-style aura battles…) that are NOT tied
-  // to any story. Whichever you pick gets PREPENDED to the very front of whatever story you're building.
-  // Lists them by friendly NAME only, grouped by category; never reads or shows any tags. Bound to a NEW
-  // state slot ST.storyIntro (a name string or null). The GUI resolves the name to its intro blocks.
-  function cardStoryIntros() {
+    c.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Borrow another story’s intro'), t('Optional. Pick a story whose opening / arrival sequence you like better — only the opening changes; everything else about YOUR story stays the same. (If you pick a “cinematic only” intro below, this is skipped.)'), sel)]));
+
+    // ── (2) Cinematic intro(s) ──
     var intros = (D['story_intros'] || []);
-    // Visually set apart from every other card: a violet gradient border + faint tint so it's obvious
-    // this is a separate, standalone option unaffiliated with any story.
-    var c = el('div', { class: 'sst-card sst-intro-card' }, [
-      el('h2', {}, [t('✦ Standalone story intro '), qmark(t('These are self-contained, character-agnostic CINEMATIC intros — think dragon riders taking flight, a desperate last stand, a DBZ-style aura power-up. They belong to no particular story. Whatever you pick here is PREPENDED to the very front of the story you’re building, before its own opening. It only ADDS a lead-in — the rest of your story (its parts, moods, clothing, character and every scene) stays exactly as you set it. Leave it on “No extra intro” to skip.'))]),
-      el('p', { class: 'hint', text: t('Optional cinematic lead-in — added to the FRONT of your story. Character-agnostic and unaffiliated with any story; pick one or leave it off.') })
-    ]);
-    if (!intros.length) {   // no intros embedded in this build → show a friendly note instead of an empty select
-      c.appendChild(el('p', { class: 'hint', style: { margin: '4px 0 0', color: '#8a90a6' }, text: t('No standalone intros are available yet.') }));
-      return c;
+    if (intros.length) {
+      if (!ST.intros || typeof ST.intros !== 'object' || Array.isArray(ST.intros)) ST.intros = { first: null, second: null, mode: 'both', secondPlace: 'after' };
+      c.appendChild(el('div', { style: { borderTop: '1px solid #262a38', margin: '14px 0 10px' } }));   // divider
+      c.appendChild(el('h2', { style: { fontSize: '14px', color: '#c9c3f0', margin: '0 0 4px' } }, [t('✦ Cinematic intro '), qmark(t('Optional. Open your story with a self-contained, character-agnostic CINEMATIC intro — a dragon rider taking flight, a desperate last stand, a DBZ-style aura power-up. It plays in the normal opening slot (between the solo intro and the solo tease), NOT before everything. Add one, or two — and choose their order and where the second one goes. Your picked character and the intro’s gear set the look; nothing else about your story changes.'))]));
+      c.appendChild(el('p', { class: 'hint', style: { margin: '0 0 10px' }, text: t('Open with an action / spectacle intro — pick one, add a second, or leave it off to keep your story’s own opening.') }));
+      // Fresh None+grouped-intros option nodes (can't reuse DOM nodes across two <select>s).
+      function _introOptions() {
+        var out = [el('option', { value: '', text: t('✦ None') })];
+        var bc = {};
+        intros.forEach(function (it) { if (!it || !it.name) return; var cat = it.category || 'Other'; (bc[cat] = bc[cat] || []).push(it); });
+        Object.keys(bc).sort().forEach(function (cat) {
+          var og = el('optgroup', { label: t(cat) });
+          bc[cat].sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); }).forEach(function (it) {
+            og.appendChild(el('option', { value: it.name, text: t(it.name) + ' — ' + tf('{n}-image intro', { n: it.beat_count }) }));
+          });
+          if (og.childNodes.length) out.push(og);
+        });
+        return out;
+      }
+      var box = el('div');   // re-rendered in place as the patron reveals more controls
+      function renderIntro() {
+        while (box.firstChild) box.removeChild(box.firstChild);
+        // First intro (the lead — always the normal narrative slot)
+        var s1 = el('select', { class: 'sst-sel', style: { maxWidth: '420px' } }, _introOptions());
+        s1.value = ST.intros.first || '';
+        s1.addEventListener('change', function () {
+          ST.intros.first = s1.value || null;
+          if (!ST.intros.first) { ST.intros.second = null; ST.intros.mode = 'both'; }   // no first → clear the rest
+          saveDraft(); renderIntro();
+        });
+        box.appendChild(el('div', { class: 'sst-row' }, [labeled(t('First intro'), t('The cinematic opener. It plays in the normal story-intro slot — between the solo intro and the solo tease — just like any story’s own intro.'), s1)]));
+        if (ST.intros.first) {
+          // Mode: keep the story's own intro too, or use only the cinematic intro
+          var sm = el('select', { class: 'sst-sel', style: { maxWidth: '380px' } }, [
+            el('option', { value: 'both', text: t('Keep it — play the story’s own intro too') }),
+            el('option', { value: 'only', text: t('Skip it — use only the cinematic intro') })
+          ]);
+          sm.value = (ST.intros.mode === 'only') ? 'only' : 'both';
+          sm.addEventListener('change', function () { ST.intros.mode = (sm.value === 'only') ? 'only' : 'both'; saveDraft(); });
+          box.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Story’s own intro'), t('Keep your story’s own opening AND add the cinematic one, or skip the story’s own so ONLY the cinematic intro plays. Either way your story always has an opening.'), sm)]));
+          // Second intro (optional)
+          var s2 = el('select', { class: 'sst-sel', style: { maxWidth: '420px' } }, _introOptions());
+          s2.value = ST.intros.second || '';
+          s2.addEventListener('change', function () { ST.intros.second = s2.value || null; saveDraft(); renderIntro(); });
+          box.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Second intro (optional)'), t('Add a second cinematic intro, or leave on “None” for just one.'), s2)]));
+          if (ST.intros.second) {
+            // Order — which of the two plays first (swaps first/second)
+            var a = ST.intros.first, b = ST.intros.second;
+            var so = el('select', { class: 'sst-sel', style: { maxWidth: '440px' } }, [
+              el('option', { value: 'ab', text: '1) ' + t(a) + '     2) ' + t(b) }),
+              el('option', { value: 'ba', text: '1) ' + t(b) + '     2) ' + t(a) })
+            ]);
+            so.value = 'ab';
+            so.addEventListener('change', function () {
+              if (so.value === 'ba') { var _sw = ST.intros.first; ST.intros.first = ST.intros.second; ST.intros.second = _sw; saveDraft(); renderIntro(); }
+            });
+            box.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Order'), t('Which intro plays first. The first plays in the opening slot; the second goes where you set below.'), so)]));
+            // Second intro placement (after / before the solo tease)
+            var sp = el('select', { class: 'sst-sel', style: { maxWidth: '380px' } }, [
+              el('option', { value: 'after', text: t('Right after the solo tease') }),
+              el('option', { value: 'before', text: t('Before the solo tease') })
+            ]);
+            sp.value = (ST.intros.secondPlace === 'before') ? 'before' : 'after';
+            sp.addEventListener('change', function () { ST.intros.secondPlace = (sp.value === 'before') ? 'before' : 'after'; saveDraft(); });
+            box.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Second intro plays'), t('Where the second intro goes — right after the solo tease, or before it (right after the first intro).'), sp)]));
+          }
+        }
+      }
+      renderIntro();
+      c.appendChild(box);
     }
-    var sel = el('select', { class: 'sst-sel', style: { maxWidth: '420px' } });
-    sel.appendChild(el('option', { value: '', text: t('✦ No extra intro (default)') }));
-    var byCat = {};
-    intros.forEach(function (it) { if (!it || !it.name) return; var cat = it.category || 'Other'; (byCat[cat] = byCat[cat] || []).push(it); });
-    Object.keys(byCat).sort().forEach(function (cat) {
-      var og = el('optgroup', { label: t(cat) });
-      byCat[cat].sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); }).forEach(function (it) {
-        og.appendChild(el('option', { value: it.name, text: t(it.name) + ' — ' + tf('{n}-image intro', { n: it.beat_count }) }));
-      });
-      if (og.childNodes.length) sel.appendChild(og);
-    });
-    sel.value = ST.storyIntro || '';
-    sel.addEventListener('change', function () { ST.storyIntro = sel.value || null; saveDraft(); });
-    c.appendChild(el('div', { class: 'sst-row' }, [labeled(t('Prepend a cinematic intro'), t('Optional. This opening plays FIRST, before your story begins — it doesn’t change any of your parts, moods or characters. Leave it on “No extra intro” to keep your story as-is.'), sel)]));
     return c;
   }
   function cardTimeline() {
@@ -7165,8 +7237,8 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     return el('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '10px', margin: '2px 0 12px', padding: '10px 12px', background: 'rgba(123,92,255,0.08)', border: '1px dashed #4a4570', borderRadius: '9px' } }, [
       el('span', { style: { fontSize: '18px', lineHeight: '1.1' }, text: '📖' }),
       el('div', { style: { flex: '1' } }, [
-        el('div', { style: { fontWeight: '700', fontSize: '13px', color: '#c9c3f0', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [t('Story intro'), el('span', { style: { fontSize: '10px', fontWeight: '600', color: '#8a90a6' }, text: t('🔒 always included · not editable') })]),
-        el('div', { class: 'hint', style: { fontSize: '11px', marginTop: '3px' }, text: t('A ~25-image opening that sets the scene — arriving at the place, stepping inside, settling in. It always plays right here (between the solo intro and the first solo scene) and can’t be resized or removed. To borrow a different story’s opening, use the “📖 Story narrative” section.') })
+        el('div', { style: { fontWeight: '700', fontSize: '13px', color: '#c9c3f0', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [t('Story opening'), el('span', { style: { fontSize: '10px', fontWeight: '600', color: '#8a90a6' }, text: t('🔒 always plays here') })]),
+        el('div', { class: 'hint', style: { fontSize: '11px', marginTop: '3px' }, text: t('An opening sequence always plays right here (between the solo intro and the first solo scene) — it can’t be resized or removed from the timeline. By default it’s this story’s own ~25-image intro; in the “📖 Story narrative” section you can borrow another story’s opening or add a cinematic intro (or two) instead.') })
       ])
     ]);
   }
@@ -9256,7 +9328,16 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     if (Object.keys(_mw).length) fpd.studio_mood_weights = _mw;
     if (ST.clothing && ST.clothing.length) fpd.studio_clothing_bands = ST.clothing.map(function (b) { return { pct: b.pct, text: (b.text || '').trim() }; });   // clothing/hair progression → GUI appends by run-%
     if (ST.narrativeFrom && ST.narrativeFrom !== ST.story) fpd.studio_narrative_from = ST.narrativeFrom;   // borrow another story's setting → GUI swaps the backdrop in (story name only; no tags exported)
-    if (ST.storyIntro) fpd.studio_story_intro = ST.storyIntro;   // standalone cinematic intro PREPENDED at the front (intro NAME only; no tags exported). Omitted when unset → unedited export stays byte-identical
+    // Cinematic intro(s) → studio_story_intros = { mode, intros:[{name, slot}, …] } in PLAY order.
+    // First intro always slot='narrative' (the normal story-intro slot); an optional 2nd is
+    // 'after_tease' | 'before_tease'. mode='cinematic_only' drops the story's own opening intro;
+    // 'both' keeps it. NAMEs only (no tags). Omitted entirely when no first intro → an unedited
+    // export stays byte-identical. (Legacy studio_story_intro is no longer written; the GUI still reads it.)
+    if (ST.intros && ST.intros.first) {
+      var _il = [{ name: ST.intros.first, slot: 'narrative' }];
+      if (ST.intros.second) _il.push({ name: ST.intros.second, slot: (ST.intros.secondPlace === 'before') ? 'before_tease' : 'after_tease' });
+      fpd.studio_story_intros = { mode: (ST.intros.mode === 'only') ? 'cinematic_only' : 'both', intros: _il };
+    }
     // Patron-inserted (drag-to-add) sections → [{index (0-based position in the FINAL custom_sections), scene_type, moods}],
     // replayed by the GUI in ascending index order. Omitted entirely when nothing was inserted (byte-identical unedited export).
     if (_hasInserted)
