@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.37
+// @version      1.0.38
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -6453,7 +6453,28 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     '.sst-ms-empty{text-align:center;padding:34px 20px 20px;color:#8a90a6}',
     '.sst-ms-empty .em{font-size:44px;margin-bottom:10px;line-height:1}',
     '.sst-ms-empty .ttl{font-size:16px;font-weight:700;color:#cdd2e4;margin-bottom:6px}',
-    '.sst-modal *{box-sizing:border-box}'
+    '.sst-modal *{box-sizing:border-box}',
+    // ── Manhwa Reader (local-folder webtoon reader) ──────────────────────────
+    '.sst-mh-intro{text-align:center;padding:36px 22px;background:#14161d;border:1px solid #262a38;border-radius:12px}',
+    '.sst-mh-intro .em{font-size:46px;line-height:1;margin-bottom:12px}',
+    '.sst-mh-intro .ttl{font-size:17px;font-weight:700;color:#e7e9f0;margin-bottom:6px}',
+    '.sst-mh-intro .hint{color:#8a90a6;font-size:12.5px;max-width:460px;margin:0 auto 16px;line-height:1.55}',
+    '.sst-mh-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px}',
+    '.sst-mh-bar .sp{flex:1 1 auto}',
+    '.sst-mh-title-lg{font-size:16px;font-weight:700;color:#e7e9f0}',
+    '.sst-mh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}',
+    '.sst-mh-card{background:#171a24;border:1px solid #262a38;border-radius:11px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;transition:border-color .12s,transform .12s,box-shadow .12s}',
+    '.sst-mh-card:hover{border-color:#7b5cff;transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.45)}',
+    '.sst-mh-cover{width:100%;aspect-ratio:3/4;object-fit:cover;object-position:top;background:#0f1117;display:block}',
+    '.sst-mh-cover.ph{display:flex;align-items:center;justify-content:center;font-size:34px;color:#3a4358}',
+    '.sst-mh-meta{padding:9px 11px 11px}',
+    '.sst-mh-name{font-size:13px;font-weight:700;color:#e7e9f0;line-height:1.3;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}',
+    '.sst-mh-sub{font-size:11px;color:#8a90a6;margin-top:4px;font-variant-numeric:tabular-nums}',
+    '.sst-mh-reader{max-width:760px;margin:0 auto}',
+    '.sst-mh-reader img{width:100%;display:block;margin:0 auto}',
+    '.sst-mh-syn{color:#cdd2e4;font-size:13.5px;line-height:1.6;background:#14161d;border:1px solid #262a38;border-left:3px solid #7b5cff;border-radius:8px;padding:12px 15px;margin:0 0 16px;white-space:pre-wrap}',
+    '.sst-mh-empty{text-align:center;padding:34px 20px;color:#8a90a6}',
+    '.sst-mh-empty .em{font-size:40px;margin-bottom:10px;line-height:1}'
   ].join('\n'));
 
   // ---- help / tooltip popup ----------------------------------------------
@@ -6613,6 +6634,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       updateCheckButton(),
       el('button', { class: 'sst-btn sm', id: 'sst-ms-btn', title: 'Your saved & submitted stories — re-open, copy, download or remove them.',
         onclick: openMyStories }, ['📚 My Stories', el('span', { class: 'sst-ms-count', id: 'sst-ms-count', style: { display: 'none' } })]),
+      el('button', { class: 'sst-btn sm', title: 'Read produced manhwas from a local folder', onclick: renderManhwaReader }, ['📖 Manhwa Reader']),
       el('button', { class: 'sst-btn sm', onclick: function () { popInfo(HELP_MAIN); } }, ['❓ Help']),
       el('button', { class: 'sst-x', title: 'Close', onclick: closeStudio }, ['×'])
     ]);
@@ -6633,6 +6655,245 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
     document.body.style.overflow = '';
     overlay = null; bodyEl = null;
+  }
+
+  // ============================================================================
+  //  MANHWA READER — read produced webtoons from a LOCAL folder the patron picks.
+  //  Pure, additive UI. EVERY browser-only API (window.showDirectoryPicker,
+  //  IndexedDB, <input webkitdirectory>, URL.createObjectURL, for-await async
+  //  iteration) is touched ONLY inside these functions, and these functions run
+  //  ONLY on a button click — never at module load — so the headless test (which
+  //  never clicks the header button) never reaches any of it.
+  // ============================================================================
+  var _mhObjectURLs = [];   // object URLs created for the current view; revoked on re-render
+  function _mhRevokeURLs() {
+    try { _mhObjectURLs.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} }); } catch (e) {}
+    _mhObjectURLs = [];
+  }
+  function _mhURL(blob) { var u = URL.createObjectURL(blob); _mhObjectURLs.push(u); return u; }
+  // A slice is a FileSystemFileHandle (FSA) OR a File (webkitdirectory) — normalise to a Blob.
+  function _mhSliceBlob(slice) {
+    if (slice && typeof slice.getFile === 'function') return Promise.resolve(slice.getFile());
+    return Promise.resolve(slice);
+  }
+
+  // --- tiny IndexedDB kv so a picked FileSystemDirectoryHandle survives a reload ---
+  function _mhIdbOpen() {
+    return new Promise(function (resolve, reject) {
+      try {
+        var rq = indexedDB.open('sst-manhwa', 1);
+        rq.onupgradeneeded = function () { try { rq.result.createObjectStore('kv'); } catch (e) {} };
+        rq.onsuccess = function () { resolve(rq.result); };
+        rq.onerror = function () { reject(rq.error); };
+      } catch (e) { reject(e); }
+    });
+  }
+  function _mhIdbGet(key) {
+    return _mhIdbOpen().then(function (db) {
+      return new Promise(function (resolve) {
+        try {
+          var rq = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+          rq.onsuccess = function () { resolve(rq.result); };
+          rq.onerror = function () { resolve(undefined); };
+        } catch (e) { resolve(undefined); }
+      });
+    }).catch(function () { return undefined; });
+  }
+  function _mhIdbSet(key, val) {
+    return _mhIdbOpen().then(function (db) {
+      return new Promise(function (resolve) {
+        try {
+          var tx = db.transaction('kv', 'readwrite');
+          tx.objectStore('kv').put(val, key);
+          tx.oncomplete = function () { resolve(true); };
+          tx.onerror = function () { resolve(false); };
+        } catch (e) { resolve(false); }
+      });
+    }).catch(function () { return false; });
+  }
+
+  var _MH_SKIP = { viewer: 1, chars: 1, demo_panels: 1 };   // never treated as a manhwa folder
+  var _MH_SLICE_RE = /_strip_\d+\.jpg$/i;                    // a webtoon vertical slice
+  // Scan a FileSystemDirectoryHandle → [{name,title,rating,synopsis,slices:[handle]}].
+  function _mhScanDir(dir) {
+    return (async function () {
+      var books = [];
+      for await (const entry of dir.values()) {
+        if (entry.kind !== 'directory') continue;
+        if (_MH_SKIP[entry.name]) continue;
+        var slices = [], metaHandle = null;
+        for await (const f of entry.values()) {
+          if (f.kind !== 'file') continue;
+          if (_MH_SLICE_RE.test(f.name)) slices.push(f);
+          else if (f.name.toLowerCase() === 'meta.json') metaHandle = f;
+        }
+        if (!slices.length) continue;   // skip subdirs with no slices
+        slices.sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+        var meta = {};
+        if (metaHandle) { try { meta = JSON.parse(await (await metaHandle.getFile()).text()); } catch (e) { meta = {}; } }
+        books.push({
+          name: entry.name,
+          title: (meta && meta.title) || entry.name,
+          rating: (meta && meta.rating) || '',
+          synopsis: (meta && meta.synopsis) || '',
+          slices: slices
+        });
+      }
+      books.sort(function (a, b) { return String(a.title).toLowerCase() < String(b.title).toLowerCase() ? -1 : 1; });
+      return books;
+    })();
+  }
+  // FALLBACK (Firefox / no FSA): a flat FileList from <input webkitdirectory>. Group by the folder
+  // that directly holds each slice (its immediate parent) so it mirrors the directory-handle scan.
+  function _mhScanFileList(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    var groups = {};   // parentPath -> {name, slices:[File], meta:File|null}
+    files.forEach(function (f) {
+      var rel = f.webkitRelativePath || f.name;
+      var segs = String(rel).split('/').filter(Boolean);
+      if (segs.length < 2) return;                       // need at least <folder>/<file>
+      var folderName = segs[segs.length - 2];
+      if (_MH_SKIP[folderName]) return;
+      var parentPath = segs.slice(0, segs.length - 1).join('/');
+      var g = groups[parentPath] || (groups[parentPath] = { name: folderName, slices: [], meta: null });
+      var base = segs[segs.length - 1];
+      if (_MH_SLICE_RE.test(base)) g.slices.push(f);
+      else if (base.toLowerCase() === 'meta.json') g.meta = f;
+    });
+    var books = [];
+    return Object.keys(groups).reduce(function (chain, key) {
+      return chain.then(function () {
+        var g = groups[key];
+        if (!g.slices.length) return;
+        g.slices.sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+        var readMeta = g.meta && typeof g.meta.text === 'function' ? g.meta.text() : Promise.resolve('');
+        return Promise.resolve(readMeta).then(function (txt) {
+          var meta = {}; if (txt) { try { meta = JSON.parse(txt); } catch (e) { meta = {}; } }
+          books.push({ name: g.name, title: (meta && meta.title) || g.name, rating: (meta && meta.rating) || '', synopsis: (meta && meta.synopsis) || '', slices: g.slices });
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      books.sort(function (a, b) { return String(a.title).toLowerCase() < String(b.title).toLowerCase() ? -1 : 1; });
+      return books;
+    });
+  }
+
+  // Landing / re-pick view.
+  function renderManhwaReader(forcePicker) {
+    ST = null;   // leave any active story — the reader is its own top-level view
+    _mhRevokeURLs();
+    clearNode(bodyEl);
+    var sub = document.getElementById('sst-sub'); if (sub) sub.textContent = 'Read produced manhwas from a local folder.';
+    var status = el('div', { class: 'hint', style: { marginTop: '14px', minHeight: '18px' } });
+    var connectBtn = el('button', { class: 'sst-btn pri', onclick: function () { _mhConnect(status); } }, ['📂 Connect your manhwa folder']);
+    bodyEl.appendChild(el('div', { class: 'sst-card' }, [
+      el('div', { class: 'sst-mh-intro' }, [
+        el('div', { class: 'em', text: '📖' }),
+        el('div', { class: 'ttl', text: 'Manhwa Reader' }),
+        el('div', { class: 'hint', text: 'Pick the folder your produced manhwas live in. Every sub-folder that holds *_strip_#.jpg slices becomes a readable title. Nothing is uploaded — everything stays on your device.' }),
+        connectBtn,
+        status
+      ])
+    ]));
+    // Silently try to reconnect to a previously-granted folder (FSA only), unless re-picking.
+    if (!forcePicker && typeof window !== 'undefined' && window.showDirectoryPicker) {
+      _mhIdbGet('dir').then(function (handle) {
+        if (!handle || typeof handle.queryPermission !== 'function') return;
+        Promise.resolve(handle.queryPermission({ mode: 'read' })).then(function (perm) {
+          if (perm === 'granted') { status.textContent = 'Reconnecting to your saved folder…'; _mhOpenHandle(handle, status); }
+          else { status.textContent = 'A folder was connected before — click above to re-grant access.'; }
+        }, function () {});
+      }, function () {});
+    }
+  }
+  function _mhConnect(status) {
+    if (typeof window !== 'undefined' && window.showDirectoryPicker) {
+      Promise.resolve(window.showDirectoryPicker()).then(function (dir) {
+        _mhIdbSet('dir', dir);                 // best-effort persist for next session
+        _mhOpenHandle(dir, status);
+      }, function () { /* user cancelled the picker */ });
+      return;
+    }
+    // No File System Access API → hidden <input webkitdirectory>.
+    var input = el('input', { type: 'file' });
+    try { input.setAttribute('webkitdirectory', ''); input.setAttribute('directory', ''); input.multiple = true; } catch (e) {}
+    input.style.display = 'none';
+    input.addEventListener('change', function () {
+      if (status) status.textContent = 'Reading folder…';
+      _mhScanFileList(input.files).then(function (list) { _mhGallery(list, 'files'); }, function () { if (status) status.textContent = 'Could not read that folder.'; });
+    });
+    (bodyEl || document.body).appendChild(input);
+    input.click();
+  }
+  function _mhOpenHandle(handle, status) {
+    var run = function () {
+      if (status) status.textContent = 'Scanning…';
+      _mhScanDir(handle).then(function (list) { _mhGallery(list, handle); }, function () { if (status) status.textContent = 'Could not read that folder.'; });
+    };
+    if (typeof handle.queryPermission === 'function') {
+      Promise.resolve(handle.queryPermission({ mode: 'read' })).then(function (perm) {
+        if (perm === 'granted') return run();
+        if (typeof handle.requestPermission === 'function') {
+          Promise.resolve(handle.requestPermission({ mode: 'read' })).then(function (p) {
+            if (p === 'granted') run(); else if (status) status.textContent = 'Permission to read the folder was denied.';
+          }, function () { run(); });
+        } else run();
+      }, function () { run(); });
+    } else run();
+  }
+  // Gallery of cover cards.
+  function _mhGallery(books, source) {
+    _mhRevokeURLs();
+    clearNode(bodyEl);
+    var sub = document.getElementById('sst-sub'); if (sub) sub.textContent = 'Your produced manhwas.';
+    bodyEl.appendChild(el('div', { class: 'sst-mh-bar' }, [
+      el('div', { class: 'sst-mh-title-lg', text: '📖 Manhwa Library' }),
+      el('span', { class: 'hint', text: books.length + (books.length === 1 ? ' title' : ' titles') }),
+      el('div', { class: 'sp' }),
+      el('button', { class: 'sst-btn sm', title: 'Pick a different folder', onclick: function () { renderManhwaReader(true); } }, ['📂 Change folder'])
+    ]));
+    if (!books.length) {
+      bodyEl.appendChild(el('div', { class: 'sst-mh-empty' }, [
+        el('div', { class: 'em', text: '📭' }),
+        el('div', { text: 'No manhwas found in that folder.' }),
+        el('div', { class: 'hint', style: { marginTop: '6px' }, text: 'Expected sub-folders that contain *_strip_#.jpg slices.' })
+      ]));
+      return;
+    }
+    var grid = el('div', { class: 'sst-mh-grid' });
+    bodyEl.appendChild(grid);
+    books.forEach(function (book) {
+      var cover = el('div', { class: 'sst-mh-cover ph', text: '📖' });
+      grid.appendChild(el('div', { class: 'sst-mh-card', title: book.title, onclick: function () { _mhReader(book, books); } }, [
+        cover,
+        el('div', { class: 'sst-mh-meta' }, [
+          el('div', { class: 'sst-mh-name', text: book.title }),
+          el('div', { class: 'sst-mh-sub', text: (book.rating ? '★ ' + book.rating + ' · ' : '') + book.slices.length + (book.slices.length === 1 ? ' slice' : ' slices') })
+        ])
+      ]));
+      if (book.slices[0]) _mhSliceBlob(book.slices[0]).then(function (blob) {
+        try { var img = el('img', { class: 'sst-mh-cover', alt: book.title }); img.src = _mhURL(blob); if (cover.parentNode) cover.parentNode.replaceChild(img, cover); } catch (e) {}
+      }, function () {});
+    });
+  }
+  // Vertical-scroll webtoon reader — synopsis + all slices stacked full-width.
+  function _mhReader(book, books) {
+    _mhRevokeURLs();
+    clearNode(bodyEl);
+    var sub = document.getElementById('sst-sub'); if (sub) sub.textContent = book.title;
+    bodyEl.appendChild(el('div', { class: 'sst-mh-bar' }, [
+      el('button', { class: 'sst-btn sm', onclick: function () { _mhGallery(books); } }, ['← Library']),
+      el('div', { class: 'sst-mh-title-lg', text: book.title }),
+      el('span', { class: 'hint', text: (book.rating ? '★ ' + book.rating + ' · ' : '') + book.slices.length + ' slices' })
+    ]));
+    var col = el('div', { class: 'sst-mh-reader' });
+    bodyEl.appendChild(col);
+    if (book.synopsis) col.appendChild(el('div', { class: 'sst-mh-syn', text: book.synopsis }));
+    book.slices.forEach(function (slice) {
+      var img = el('img', { alt: book.title });
+      col.appendChild(img);
+      _mhSliceBlob(slice).then(function (blob) { try { img.src = _mhURL(blob); } catch (e) {} }, function () {});
+    });
   }
 
   function renderPicker() {
@@ -6699,9 +6960,9 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   function chooseStory(name) { initStory(name); renderEditor(); }
 
   // ====================================================== EDITOR
-  function renderEditor() {
+  function renderEditor(keepActive) {
     clearNode(bodyEl); sectionCtl = []; timelineBar = null; timelineKey = null; clothingBar = null; clothingRows = null; closeTimelineFullscreen();
-    activeSection = -1; resizePartner = -1; sectionPanelEl = null;   // live editing state is per-story
+    activeSection = (typeof keepActive === 'number') ? keepActive : -1; resizePartner = -1; sectionPanelEl = null;   // live editing state is per-story (keepActive re-selects a part, e.g. a just-inserted one)
     var sub = document.getElementById('sst-sub'); if (sub) sub.textContent = t('Editing: ') + t(ST.story);
     bodyEl.appendChild(el('div', { class: 'sst-row', style: { margin: '0 0 12px' } }, [
       el('button', { class: 'sst-btn sm', onclick: function () { saveDraft(); renderPicker(); } }, ['← All stories']),
@@ -7322,7 +7583,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     });
     activeSection = _newIdx; resizePartner = -1;
     normalizeSections(-1);   // guarantee sum=100 + every minimum (the fresh 2% part already meets its floor)
-    saveDraft(); renderEditor();
+    saveDraft(); renderEditor(_newIdx);
   }
   // Remove a patron-INSERTED section (base sections are never removable). Its % is handed back to the
   // biggest OTHER same-type section (or the largest remaining part if none), then normalizeSections tidies.
@@ -7337,7 +7598,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     if (activeSection === i) activeSection = -1; else if (activeSection > i) activeSection--;
     resizePartner = -1;
     normalizeSections(-1);
-    saveDraft(); renderEditor();
+    saveDraft(); renderEditor(activeSection);
   }
   // Pointer-drag a scene-type palette tile onto the timeline bar to insert a section there. Mirrors
   // sfStartDrag's ghost, but drops onto a timeline segment (resolved via sectionAtX on whichever bar
@@ -7675,7 +7936,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       // holds the natural majority. This makes the DISPLAY % match the engine (add 17% / No Position 83%),
       // fixing the 14pp desync. Not folded → show every effective position (defaults + adds) as before.
       var _folded = posFoldActive(s);
-      var eff = _folded ? posAddUniq(s) : partPositions(s);
+      var eff = _folded ? posAddUniq(s) : posUniq(s);   // dedupe: a pose baked twice showed two chips summing past 100% (glance panel already uses posUniq)
       // (2026-07-14 Feature 2) With NO explicit positions left, the part runs on its natural look = 100% No
       // Position (the sentinel row below shows 100%). Explain it — and it's reversible via the removed-defaults ↺ row.
       // When folded, absence of adds is the same natural-look state (defaults live in the sentinel).
