@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.36
+// @version      1.0.37
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -7474,6 +7474,10 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       rng.addEventListener('focus', function () { setActive(i); });
       rng.addEventListener('input', function () {
         activeSection = i;
+        // Ignore empty / non-finite input while typing in a fine (precise-%)
+        // field. Otherwise round2('')=0 → clamp→0.01 collapses the beat and
+        // rebalances a sibling, persisted on blur. (Mirrors startKeyPctEdit.)
+        if (s.fine && (rng.value === '' || !isFinite(+rng.value))) return;
         var want = clamp(s.fine ? round2(rng.value) : +rng.value, lo, 100);
         applyPartneredResize(i, want);   // chosen partner gives/takes the space; else the existing largest-section rebalance
         syncWidths();                    // move siblings + timeline + panel in place — no full redraw, no scroll jump
@@ -10623,7 +10627,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     }
     // (defect-8 fix 2026-07-14) A truthy NON-array custom_sections (e.g. {}) defeated `|| []` and threw at
     // cs.map/forEach mid-mutation → half-imported ST; Array.isArray coerces it to [] so import degrades gracefully.
-    var cs = Array.isArray(d.custom_sections) ? d.custom_sections : [], spos = fpd.studio_section_positions || [], sexcl = fpd.studio_section_exclude_positions || [], notes = fpd.studio_section_notes || [], snopos = fpd.studio_section_nopos_mode || [], spw = fpd.studio_section_position_weights || [];   // (2026-07-14 BUG B2) spw = the engine parallel weight array — the fallback when custom_sections[i].position_weights is absent (engine-shaped / hand-edited / resume file)
+    var cs = Array.isArray(d.custom_sections) ? d.custom_sections : [], spos = fpd.studio_section_positions || [], sexcl = fpd.studio_section_exclude_positions || [], notes = Array.isArray(fpd.studio_section_notes) ? fpd.studio_section_notes : [], snopos = fpd.studio_section_nopos_mode || [], spw = fpd.studio_section_position_weights || [];   // (2026-07-14 BUG B2) spw = the engine parallel weight array — the fallback when custom_sections[i].position_weights is absent (engine-shaped / hand-edited / resume file)
     // (2026-07-14 BUG B1) Reconstruct patron-INSERTED sections BEFORE the by-index overlay. buildExport writes
     // fpd.studio_inserted_sections = [{index (0-based in the FINAL custom_sections), scene_type, moods}], but a
     // freshly-initStory'd ST.sections is only the creator's BASE arc — so the extra parts would map to undefined
@@ -10669,7 +10673,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     // overlay would land edits on the wrong scene. Detect via section count + per-section scene_type.
     // (Older files have no scene_type, so they fall back to the original positional behavior.)
     var _stale = cs.length !== ST.sections.length || cs.some(function (sec, i) {
-      return sec.scene_type != null && ST.sections[i] && sec.scene_type !== ST.sections[i].scene_type;
+      return sec && sec.scene_type != null && ST.sections[i] && sec.scene_type !== ST.sections[i].scene_type;
     });
     if (_stale) popInfo(t('Heads up: this saved file was built on a different version of this story, so some parts may not line up. Please double-check each section after importing.'));
     function _match(i) { var sec = cs[i], s = ST.sections[i]; return !!(s && (!sec || sec.scene_type == null || sec.scene_type === s.scene_type)); }
