@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.38
+// @version      1.0.39
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -6712,6 +6712,15 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     }).catch(function () { return false; });
   }
 
+  // In-memory copy of the persisted directory handle. Restored ONCE on load (like the
+  // mood-examples folder) so a click can call requestPermission SYNCHRONOUSLY — reading
+  // the handle from IndexedDB inside the click handler would lose the user-gesture that
+  // requestPermission requires, and the browser drops the handle's read permission to
+  // 'prompt' after a reload. With this, reconnecting is a one-click re-grant, not a
+  // full folder re-pick (which is why it used to ask you to reselect every time).
+  var _mhSavedDir = null;
+  try { _mhIdbGet('dir').then(function (h) { if (h) _mhSavedDir = h; }).catch(function () {}); } catch (e) {}
+
   var _MH_SKIP = { viewer: 1, chars: 1, demo_panels: 1 };   // never treated as a manhwa folder
   var _MH_SLICE_RE = /_strip_\d+\.jpg$/i;                    // a webtoon vertical slice
   // Scan a FileSystemDirectoryHandle → [{name,title,rating,synopsis,slices:[handle]}].
@@ -6785,7 +6794,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     clearNode(bodyEl);
     var sub = document.getElementById('sst-sub'); if (sub) sub.textContent = 'Read produced manhwas from a local folder.';
     var status = el('div', { class: 'hint', style: { marginTop: '14px', minHeight: '18px' } });
-    var connectBtn = el('button', { class: 'sst-btn pri', onclick: function () { _mhConnect(status); } }, ['📂 Connect your manhwa folder']);
+    var connectBtn = el('button', { class: 'sst-btn pri', onclick: function () { _mhConnect(status, forcePicker); } }, ['📂 Connect your manhwa folder']);
     bodyEl.appendChild(el('div', { class: 'sst-card' }, [
       el('div', { class: 'sst-mh-intro' }, [
         el('div', { class: 'em', text: '📖' }),
@@ -6795,20 +6804,33 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
         status
       ])
     ]));
-    // Silently try to reconnect to a previously-granted folder (FSA only), unless re-picking.
+    // Reconnect to a previously-connected folder without a full re-pick (FSA only).
+    // If read permission survived (same session) → reconnect silently. If it dropped to
+    // 'prompt' (after a reload/restart) → keep the saved handle in memory and relabel the
+    // button so ONE click re-grants the SAME folder (no re-navigation).
     if (!forcePicker && typeof window !== 'undefined' && window.showDirectoryPicker) {
       _mhIdbGet('dir').then(function (handle) {
         if (!handle || typeof handle.queryPermission !== 'function') return;
+        _mhSavedDir = handle;
         Promise.resolve(handle.queryPermission({ mode: 'read' })).then(function (perm) {
           if (perm === 'granted') { status.textContent = 'Reconnecting to your saved folder…'; _mhOpenHandle(handle, status); }
-          else { status.textContent = 'A folder was connected before — click above to re-grant access.'; }
+          else {
+            status.textContent = 'Your manhwa folder is remembered — click to reconnect (no need to reselect it).';
+            connectBtn.textContent = '📂 Reconnect your manhwa folder';
+          }
         }, function () {});
       }, function () {});
     }
   }
-  function _mhConnect(status) {
+  function _mhConnect(status, forcePicker) {
     if (typeof window !== 'undefined' && window.showDirectoryPicker) {
+      // Prefer the remembered folder: _mhOpenHandle re-grants read access with a single
+      // "Allow" prompt (no re-navigation). _mhSavedDir is already in memory, so
+      // requestPermission runs inside this click's user-gesture. Only fall back to the
+      // full picker when there's no saved folder or the user explicitly changed folders.
+      if (!forcePicker && _mhSavedDir) { _mhOpenHandle(_mhSavedDir, status); return; }
       Promise.resolve(window.showDirectoryPicker()).then(function (dir) {
+        _mhSavedDir = dir;
         _mhIdbSet('dir', dir);                 // best-effort persist for next session
         _mhOpenHandle(dir, status);
       }, function () { /* user cancelled the picker */ });
