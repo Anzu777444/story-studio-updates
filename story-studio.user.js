@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.39
+// @version      1.0.40
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -6666,11 +6666,52 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   //  never clicks the header button) never reaches any of it.
   // ============================================================================
   var _mhObjectURLs = [];   // object URLs created for the current view; revoked on re-render
+  var _mhAudioURLs = [];    // SFX object URLs (revoked together with the view)
+  var _mhAudioState = null; // active reader's audio state; stopped on re-render
+  function _mhStopAudio() {
+    if (_mhAudioState) {
+      var A = _mhAudioState;
+      if (A.io) { try { A.io.disconnect(); } catch (e) {} }
+      for (var k in A.byIdx) { try { A.byIdx[k].pause(); } catch (e) {} }
+    }
+    _mhAudioState = null;
+    try { _mhAudioURLs.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} }); } catch (e) {}
+    _mhAudioURLs = [];
+  }
   function _mhRevokeURLs() {
+    _mhStopAudio();
     try { _mhObjectURLs.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} }); } catch (e) {}
     _mhObjectURLs = [];
   }
   function _mhURL(blob) { var u = URL.createObjectURL(blob); _mhObjectURLs.push(u); return u; }
+  function _mhAudioURL(blob) { var u = URL.createObjectURL(blob); _mhAudioURLs.push(u); return u; }
+  // Match an SFX file to a slice by trailing number (works for panel_07.mp3 AND slug_strip_07.mp3).
+  function _mhStripNum(name) { var m = String(name).match(/_strip_(\d+)\./i) || String(name).match(/(\d+)\.[a-z0-9]+$/i); return m ? parseInt(m[1], 10) : -1; }
+  function _mhFade(a, to, ms) {
+    if (a._t) clearInterval(a._t);
+    var from = a.volume, st = Math.max(1, Math.round(ms / 40)), k = 0;
+    a._t = setInterval(function () {
+      k++; a.volume = Math.max(0, Math.min(1, from + (to - from) * k / st));
+      if (k >= st) { clearInterval(a._t); a._t = null; if (to === 0) { try { a.pause(); a.currentTime = 0; } catch (e) {} } }
+    }, 40);
+  }
+  function _mhPlayPanel(A, idx) {
+    if (A.cur >= 0 && A.byIdx[A.cur]) _mhFade(A.byIdx[A.cur], 0, 450);
+    A.cur = idx;
+    var img = A.panels[idx]; if (!img || !img._sfxHandle) return;
+    if (A.byIdx[idx]) { var a = A.byIdx[idx]; try { a.volume = 0; a.play().then(function () { _mhFade(a, A.vol, 550); }).catch(function () {}); } catch (e) {} return; }
+    Promise.resolve(img._sfxHandle.getFile ? img._sfxHandle.getFile() : img._sfxHandle).then(function (blob) {
+      var au = new Audio(_mhAudioURL(blob)); au.loop = true; au.volume = 0; A.byIdx[idx] = au;
+      if (A.on && A.cur === idx) { try { au.play().then(function () { _mhFade(au, A.vol, 550); }).catch(function () {}); } catch (e) {} }
+    }, function () {});
+  }
+  function _mhPickNow(A) {   // play the panel nearest the viewport centre right now (used when sound is toggled on)
+    if (!A.on || !A.panels) return;
+    var vc = window.innerHeight / 2, best = -1, bd = 1e9;
+    A.panels.forEach(function (p, i) { var r = p.getBoundingClientRect(); if (r.bottom < 0 || r.top > window.innerHeight) return;
+      var d = Math.abs((r.top + r.bottom) / 2 - vc); if (d < bd) { bd = d; best = i; } });
+    if (best >= 0) { A.cur = -1; _mhPlayPanel(A, best); }
+  }
   // A slice is a FileSystemFileHandle (FSA) OR a File (webkitdirectory) — normalise to a Blob.
   function _mhSliceBlob(slice) {
     if (slice && typeof slice.getFile === 'function') return Promise.resolve(slice.getFile());
@@ -6730,8 +6771,9 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       for await (const entry of dir.values()) {
         if (entry.kind !== 'directory') continue;
         if (_MH_SKIP[entry.name]) continue;
-        var slices = [], metaHandle = null;
+        var slices = [], metaHandle = null, sfxDir = null;
         for await (const f of entry.values()) {
+          if (f.kind === 'directory') { if (f.name.toLowerCase() === 'sfx') sfxDir = f; continue; }
           if (f.kind !== 'file') continue;
           if (_MH_SLICE_RE.test(f.name)) slices.push(f);
           else if (f.name.toLowerCase() === 'meta.json') metaHandle = f;
@@ -6740,12 +6782,15 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
         slices.sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
         var meta = {};
         if (metaHandle) { try { meta = JSON.parse(await (await metaHandle.getFile()).text()); } catch (e) { meta = {}; } }
+        var sfx = {};   // {panelNumber: FileSystemFileHandle} from the sfx/ subfolder, if present
+        if (sfxDir) { try { for await (const s of sfxDir.values()) { if (s.kind === 'file' && /\.mp3$/i.test(s.name)) { var sn = s.name.match(/(\d+)\.mp3$/i); if (sn) sfx[parseInt(sn[1], 10)] = s; } } } catch (e) {} }
         books.push({
           name: entry.name,
           title: (meta && meta.title) || entry.name,
           rating: (meta && meta.rating) || '',
           synopsis: (meta && meta.synopsis) || '',
-          slices: slices
+          slices: slices,
+          sfx: sfx
         });
       }
       books.sort(function (a, b) { return String(a.title).toLowerCase() < String(b.title).toLowerCase() ? -1 : 1; });
@@ -6761,11 +6806,19 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       var rel = f.webkitRelativePath || f.name;
       var segs = String(rel).split('/').filter(Boolean);
       if (segs.length < 2) return;                       // need at least <folder>/<file>
+      var base = segs[segs.length - 1];
+      // SFX file (<manhwa>/sfx/<name>.mp3) → attach to its manhwa group by panel number
+      if (segs.length >= 3 && segs[segs.length - 2].toLowerCase() === 'sfx' && /\.mp3$/i.test(base)) {
+        var mkey = segs.slice(0, segs.length - 2).join('/');
+        var mg = groups[mkey] || (groups[mkey] = { name: segs[segs.length - 3], slices: [], meta: null, sfx: {} });
+        if (!mg.sfx) mg.sfx = {};
+        var sn = base.match(/(\d+)\.mp3$/i); if (sn) mg.sfx[parseInt(sn[1], 10)] = f;
+        return;
+      }
       var folderName = segs[segs.length - 2];
       if (_MH_SKIP[folderName]) return;
       var parentPath = segs.slice(0, segs.length - 1).join('/');
-      var g = groups[parentPath] || (groups[parentPath] = { name: folderName, slices: [], meta: null });
-      var base = segs[segs.length - 1];
+      var g = groups[parentPath] || (groups[parentPath] = { name: folderName, slices: [], meta: null, sfx: {} });
       if (_MH_SLICE_RE.test(base)) g.slices.push(f);
       else if (base.toLowerCase() === 'meta.json') g.meta = f;
     });
@@ -6778,7 +6831,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
         var readMeta = g.meta && typeof g.meta.text === 'function' ? g.meta.text() : Promise.resolve('');
         return Promise.resolve(readMeta).then(function (txt) {
           var meta = {}; if (txt) { try { meta = JSON.parse(txt); } catch (e) { meta = {}; } }
-          books.push({ name: g.name, title: (meta && meta.title) || g.name, rating: (meta && meta.rating) || '', synopsis: (meta && meta.synopsis) || '', slices: g.slices });
+          books.push({ name: g.name, title: (meta && meta.title) || g.name, rating: (meta && meta.rating) || '', synopsis: (meta && meta.synopsis) || '', slices: g.slices, sfx: g.sfx || {} });
         });
       });
     }, Promise.resolve()).then(function () {
@@ -6899,23 +6952,55 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     });
   }
   // Vertical-scroll webtoon reader — synopsis + all slices stacked full-width.
+  // CLICK any panel to smooth-scroll to the next one. If the manhwa folder has an
+  // sfx/ subfolder, an "Enable sound" toggle plays each panel's ambience as it
+  // scrolls into view (matched to the panel by number).
   function _mhReader(book, books) {
     _mhRevokeURLs();
     clearNode(bodyEl);
     var sub = document.getElementById('sst-sub'); if (sub) sub.textContent = book.title;
-    bodyEl.appendChild(el('div', { class: 'sst-mh-bar' }, [
+    var hasSfx = book.sfx && Object.keys(book.sfx).length;
+    var A = { on: false, vol: 0.5, cur: -1, byIdx: {}, io: null, panels: [] };
+    var barKids = [
       el('button', { class: 'sst-btn sm', onclick: function () { _mhGallery(books); } }, ['← Library']),
       el('div', { class: 'sst-mh-title-lg', text: book.title }),
       el('span', { class: 'hint', text: (book.rating ? '★ ' + book.rating + ' · ' : '') + book.slices.length + ' slices' })
-    ]));
+    ];
+    if (hasSfx) {
+      var vol = el('input', { type: 'range', title: 'SFX volume', style: { width: '84px', verticalAlign: 'middle' } });
+      vol.min = '0'; vol.max = '1'; vol.step = '0.05'; vol.value = '0.5';
+      vol.addEventListener('input', function (e) { A.vol = parseFloat(e.target.value); var a = A.byIdx[A.cur]; if (a && A.on && !a.paused) a.volume = A.vol; });
+      var sbtn = el('button', { class: 'sst-btn sm', onclick: function () {
+        A.on = !A.on;
+        if (A.on) { sbtn.textContent = '🔊 Sound on'; _mhPickNow(A); }
+        else { sbtn.textContent = '🔊 Enable sound'; for (var k in A.byIdx) { try { A.byIdx[k].pause(); A.byIdx[k].currentTime = 0; A.byIdx[k].volume = 0; } catch (e) {} } A.cur = -1; }
+      } }, ['🔊 Enable sound']);
+      barKids.push(el('span', { class: 'hint', text: '🔉' }), vol, sbtn);
+    }
+    bodyEl.appendChild(el('div', { class: 'sst-mh-bar' }, barKids));
     var col = el('div', { class: 'sst-mh-reader' });
     bodyEl.appendChild(col);
     if (book.synopsis) col.appendChild(el('div', { class: 'sst-mh-syn', text: book.synopsis }));
-    book.slices.forEach(function (slice) {
-      var img = el('img', { alt: book.title });
+    book.slices.forEach(function (slice, i) {
+      var img = el('img', { alt: book.title, title: 'Click for the next panel', style: { cursor: 'pointer' },
+        onclick: function () { var nxt = A.panels[i + 1] || img; try { nxt.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { try { nxt.scrollIntoView(); } catch (e2) {} } } });
+      img._idx = i;
       col.appendChild(img);
+      A.panels.push(img);
       _mhSliceBlob(slice).then(function (blob) { try { img.src = _mhURL(blob); } catch (e) {} }, function () {});
+      if (hasSfx) img._sfxHandle = book.sfx[_mhStripNum(slice.name)] || null;
     });
+    if (hasSfx) {
+      _mhAudioState = A;
+      var ratios = {};
+      A.io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { ratios[e.target._idx] = e.intersectionRatio; });
+        if (!A.on) return;
+        var best = -1, br = -1; for (var k in ratios) { if (ratios[k] > br) { br = ratios[k]; best = parseInt(k, 10); } }
+        if (best >= 0 && best !== A.cur) _mhPlayPanel(A, best);
+      }, { root: null, threshold: [0, 0.25, 0.5, 0.75, 1] });
+      A.panels.forEach(function (p) { A.io.observe(p); });
+    }
   }
 
   function renderPicker() {
