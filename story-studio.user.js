@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.44
+// @version      1.0.45
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -10611,7 +10611,14 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     return {
       save_type: 'fresh', save_name: ST.story + ' — Patron Custom', saved_at: new Date().toISOString(),
       schema_version: 1, based_on_story: ST.story, based_on_story_version: 'v2',
-      patron: _patronIdentity || null,   // WHO exported this — Patreon {id, name, vanity} — so the creator never mixes up requests (id matches the members-CSV "User ID")
+      patron: _patronIdentity
+        ? { id: _patronIdentity.id || '', name: _patronIdentity.name || '', vanity: _patronIdentity.vanity || '', verified: true }
+        : (_manualName ? { id: '', name: _manualName, vanity: '', verified: false } : null),
+        // WHO exported this. verified:true = auto-detected from the sender's OWN logged-in Patreon account
+        // (has a numeric id — trustworthy). verified:false = a name the sender TYPED in themselves (no id —
+        // could be anyone's, so the creator's inbox flags it so a request can't be silently sent in someone
+        // else's name). null = anonymous. id matches the members-CSV "User ID"; a manual name has no id but
+        // the creator can Assign-to-member.
       anon_device_id: anonDeviceId(),    // stable per-browser id — lets the creator GROUP + attribute a patron's unknown requests even when `patron` is null (GUI "Assign to member")
       custom_sections: sections, fresh_prompt_defaults: fpd
     };
@@ -10856,6 +10863,55 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       translateTree(bar);
     } catch (e) {}
   }
+  // Ask the patron for their name when the identity ladder found NOTHING, so a request never reaches the
+  // creator as an unattributable "unknown". Saved on-device (durable localStorage mirror) for next time.
+  // onProceed() = go ahead and send (with the saved name, or anonymous if they skip); onAbort() = they
+  // closed the prompt → cancel the send (caller restores the button). Never ships anonymous silently.
+  function _promptManualName(onProceed, onAbort) {
+    var _done = false;
+    function shut() { if (box.parentNode) box.parentNode.removeChild(box); }
+    function abort() { if (_done) return; _done = true; shut(); if (onAbort) onAbort(); }
+    function proceed(save) {
+      if (_done) return; _done = true;
+      if (save) {
+        var n = String(input.value || '').replace(/[<>&\x00-\x1f]/g, '').trim().slice(0, 80);
+        if (n) { _manualName = n; try { sv('manual_name', n); } catch (e) {} }
+      }
+      shut(); if (onProceed) onProceed();
+    }
+    var input = el('input', { class: 'sst-in', type: 'text', maxlength: 80,
+      placeholder: t('e.g. Alex'), value: _manualName || '',
+      style: { width: '100%', boxSizing: 'border-box', margin: '4px 0 14px' } });
+    var box = el('div', { class: 'sst-ov', style: { zIndex: '2147483646' },
+      onclick: function (e) { if (e.target === box && _mdTarget === box) abort(); } }, [
+      el('div', { class: 'sst-modal', style: { width: 'min(460px,92vw)' } }, [
+        el('div', { class: 'sst-head' }, [el('h1', { text: t('Who’s this from?') }),
+          el('button', { class: 'sst-x', onclick: abort }, ['×'])]),
+        el('div', { class: 'sst-body' }, [
+          el('p', { style: { margin: '0 0 8px', lineHeight: '1.4' },
+            html: t('We couldn’t auto-detect your Patreon account — you may not be logged in to Patreon in this browser (common on iPhone / iPad Safari). Add your name so the creator knows this request is from you. It’s saved on this device for next time.') }),
+          input,
+          el('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap' } }, [
+            el('button', { class: 'sst-btn', onclick: function () { proceed(false); } }, [t('Send without my name')]),
+            el('button', { class: 'sst-btn pri', onclick: function () { proceed(true); } }, [t('Save & send')])
+          ])
+        ])
+      ])
+    ]);
+    document.body.appendChild(box);
+    translateTree(box);
+    try { input.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); proceed(true); } }); } catch (e) {}
+    try { setTimeout(function () { try { input.focus(); } catch (e) {} }, 60); } catch (e) {}
+  }
+  function _maybePromptIdentity(btn, label) {
+    // Ladder resolved (or hit the 4s cap). If we STILL have no name (not logged in / cookie-stripped on
+    // Safari), ask once — else the creator gets an unattributable "unknown". Closing the prompt cancels
+    // the send and restores the button rather than silently shipping anonymous.
+    var haveName = (_patronIdentity && (_patronIdentity.name || _patronIdentity.id)) || _manualName;
+    if (haveName) { _doSubmit(btn, label); return; }
+    _promptManualName(function () { _doSubmit(btn, label); },
+                      function () { if (btn) { btn.disabled = false; btn.textContent = label; } });
+  }
   function submitToInbox(btn) {
     if (!_submitConfigured() || typeof GM_xmlhttpRequest !== 'function') { popInfo(t('Online submit isn’t set up yet — use “Export story file” or “Copy to clipboard” instead.')); return; }
     var label = btn ? btn.textContent : '';
@@ -10867,7 +10923,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     var _idReady;
     try { _idReady = Promise.race([ensurePatronIdentity(), _idTimeout]); }
     catch (e) { _idReady = Promise.resolve(); }
-    _idReady.then(function () { _doSubmit(btn, label); }, function () { _doSubmit(btn, label); });
+    _idReady.then(function () { _maybePromptIdentity(btn, label); }, function () { _maybePromptIdentity(btn, label); });
   }
   function _doSubmit(btn, label) {
     var data = buildExport();   // built AFTER identity resolves → data.patron reflects the ladder result
@@ -10875,7 +10931,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       if (btn) { btn.disabled = false; btn.textContent = label; }
       if (status === 'ok') {
         try { _msRecord(data, 'submitted'); } catch (e) {}
-        if (!(data.patron && data.patron.id)) _showIdentityWarnBanner();   // sent, but we don't know who → soft warn (send NOT blocked)
+        if (!(data.patron && (data.patron.id || data.patron.name))) _showIdentityWarnBanner();   // sent but truly anonymous (no id AND no name) → soft warn. A manual name counts as identified, so no warn.
         popInfo(t('✓ Sent to the creator! Your request is in — and saved to 📚 My Stories, where you can re-open, copy or download it anytime.'));
       }
       else if (status === 'unauthorized') popInfo(t('The creator’s inbox rejected the request. Please let the creator know, and use “Export story file” to send it manually for now.'));
@@ -11517,6 +11573,13 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   //    requests. Read from Patreon's OWN /api/current_user (same endpoint the access gate uses). The Patreon
   //    numeric user id is the stable key that matches the creator's members-CSV "User ID" column.
   var _patronIdentity = null;
+  // Manual-name fallback (2026-08-11): when the WHOLE identity ladder finds nothing — the patron isn't
+  // logged in to Patreon in this browser (common on iPhone/iPad Safari, where a userscript's GM fetch is
+  // cookieless and older builds had only that path) — no automated layer can name them. We ask once,
+  // persist on-device via the durable localStorage mirror, and stamp it so the creator sees a real name
+  // instead of "unknown". Empty until the patron fills it (real Patreon identity always wins over it).
+  var _manualName = '';
+  try { _manualName = String(gv('manual_name', '') || '').replace(/[<>&\x00-\x1f]/g, '').trim().slice(0, 80); } catch (e) {}
   // The real page window (for the __next_f flight-chunk / window.patreon fallbacks). The DOM read
   // and the native fetch below don't need it, but quoid Userscripts can't reach page globals at all,
   // so PW just gracefully falls back to the sandbox `window` there. (Module had no PW binding before.)
