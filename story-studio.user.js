@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.49
+// @version      1.0.50
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -8954,7 +8954,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     var isAndroid = /Android/.test(ua);
     var uaMobile = false; try { uaMobile = navigator.userAgentData ? !!navigator.userAgentData.mobile : /Mobi/.test(ua); } catch (e6) {}
     var coarse = false; try { coarse = !!(window.matchMedia && window.matchMedia('(pointer:coarse)').matches); } catch (e10) {}
-    var isMobile = isIOS || isAndroid || uaMobile || (coarse && mtp > 0 && !canPicker);   // catch "Request Desktop Site" touch devices (desktop UA, no Android/Mobi): coarse pointer + touch + no showDirectoryPicker — real desktops have canPicker (Chromium) or a fine pointer
+    var isMobile = isIOS || isAndroid || uaMobile || (coarse && mtp > 0 && !canPicker && !/Windows|Macintosh/i.test(ua));   // catch Android "Request Desktop Site" (coarse pointer, touch, no showDirectoryPicker) WITHOUT misrouting Windows/Mac touch laptops on Firefox/Brave (Android desktop-site UA is X11/Linux, so it still fires)
     var isChromium = false; try { isChromium = !!W.chrome; } catch (e7) {}
     var isFirefox = ua.indexOf('Firefox') !== -1;
     var isSafari = !isChromium && !isFirefox && ua.indexOf('Safari') !== -1 && ua.indexOf('Chrome') === -1;
@@ -9025,8 +9025,10 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   function packSizeLabel(ti) { var mb = (ti && ti.mb) || 0; return (mb >= 1000) ? ((Math.round(mb / 100) / 10) + ' GB') : (mb + ' MB'); }
   function packDefaultTier() { for (var i = 0; i < PACK_TIERS.length; i++) if (PACK_TIERS[i].def) return PACK_TIERS[i]; return PACK_TIERS[PACK_TIERS.length - 1]; }
   function packTierByKey(k) { for (var i = 0; i < PACK_TIERS.length; i++) if (PACK_TIERS[i].key === k) return PACK_TIERS[i]; return null; }
-  function packGuessTier(name) {   // patron files are named "…Small / Medium / Large / Extra Large / Ultra…"
+  function packGuessTier(name) {   // handles BOTH the friendly names (Small/Medium/Large/Extra Large/Ultra) and the build-tool names (story-studio-previews-<key>.sspack)
     name = (name || '').toLowerCase();
+    var m = /previews-(ultra|xl|l|m|s)(?![a-z])/.exec(name);   // technical form (browser may append " (1)" — lookahead passes on space/dot); xl wins over l via the anchor
+    if (m) return m[1];
     if (name.indexOf('ultra') >= 0) return 'ultra';
     if (name.indexOf('extra') >= 0) return 'xl';       // before 'large' — "extra large" contains "large"
     if (name.indexOf('medium') >= 0) return 'm';
@@ -9085,7 +9087,11 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     if (_packIO !== null) return _packIO;
     if (typeof IntersectionObserver === 'undefined') { _packIO = false; return _packIO; }
     _packIO = new IntersectionObserver(function (ents) {
-      ents.forEach(function (en) { var c = en.target; c._packVisible = en.isIntersecting; if (en.isIntersecting && c._packDraw) c._packDraw(); });
+      ents.forEach(function (en) {
+        var c = en.target;
+        if (!en.isIntersecting && c.parentNode == null) { try { _packIO.unobserve(c); } catch (e) {} _packRelease(c); return; }   // M2: a detached canvas fires not-intersecting → unobserve so the observation set can't grow unbounded
+        c._packVisible = en.isIntersecting; if (en.isIntersecting && c._packDraw) c._packDraw();
+      });
       _packEvict();   // L3: evict every batch so a hit canvas-memory ceiling recovers
     }, { rootMargin: '300px' });
     return _packIO;
@@ -9203,7 +9209,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
   }
 
   // ---- import: validate header + store the WHOLE File as one 'pack' blob; step down on QuotaExceededError ----
-  function importSspack(file, tier, onDone, onErr) {
+  function importSspack(file, tier, onDone, onErr, isAborted) {
     if (!file) { if (onErr) onErr('nofile'); return; }
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function () {}, function () {}); } catch (e0) {}   // M8: best-effort durability (Chromium auto-grants engaged first-party origins; Firefox prompts; harmless if denied)
     var info = null;
@@ -9233,6 +9239,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
         tx.onerror = function () { rej(tx.error || new Error('error')); };
       });
     }).then(function () {
+      if (isAborted && isAborted()) return;   // M1: the patron Cancelled or the watchdog fired while this write was in flight — the blob+meta still committed (rehydrates cleanly next load), but don't activate/broadcast over a "cancelled" UI
       _moodPack = { file: file, blobStart: info.blobStart, entries: info.manifest.entries || {}, version: info.version, count: info.manifest.count || 0, tier: tier || '' };
       _moodPackTier = tier || ''; _moodPackReady = true; _packEvicted = false;
       try { sv('packEver', { tier: tier || '' }); } catch (e9) {}   // M9: remember a pack was set up here, so a FULL (origin-wide) eviction still offers Reconnect instead of a fresh download
@@ -9260,7 +9267,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       var meta = null, blob = null, got = 0;
       function join() {
         if (++got < 2) return;
-        if (!meta) { try { var _pe = gv('packEver', null); if (_pe) { _packEvicted = true; _moodPackTier = (_pe && _pe.tier) || ''; } } catch (e) {} res(false); return; }   // M9: origin-wide eviction wiped meta too → still offer Reconnect if a pack was ever set up
+        if (!meta) { try { var _pe = gv('packEver', null); if (_pe && packMobileEligible()) { _packEvicted = true; _moodPackTier = (_pe && _pe.tier) || ''; } } catch (e) {} res(false); return; }   // M9/M3: origin-wide eviction wiped meta → offer Reconnect ONLY on the mobile device where it happened (not a config-synced desktop)
         if (!blob) { _packEvicted = true; _moodPackTier = (meta && meta.tier) || ''; res(false); return; }   // meta but no blob = evicted → reconnect UI
         var bStart = meta.blobStart || 12;
         blob.slice(12, bStart).text().then(function (txt) {
@@ -9309,7 +9316,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     document.body.appendChild(inp); inp.click();
   }
   function _packRunImport(file, tier, cb) {
-    var done = false, timer = null, ticks = 0;
+    var done = false, timer = null, ticks = 0, aborted = false;
     var elapsed = el('div', { class: 'hint', style: { textAlign: 'center', marginTop: '8px' } });
     var ov = el('div', { class: 'sst-ov', style: { zIndex: '2147483607' } }, [
       el('div', { class: 'sst-modal', style: { width: 'min(420px,92vw)' } }, [
@@ -9326,6 +9333,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     try { timer = setInterval(function () { ticks++; elapsed.textContent = tf('{n} seconds… a big size can take up to a minute.', { n: ticks }); if (ticks >= 120) settle('timeout'); }, 1000); } catch (e) {}   // M3: watchdog (120s — a real 1.7 GB+ write can exceed 45s)
     function settle(kind, failedTier) {   // single-settle funnel: ok / quota / cancel / blocked / truncated / timeout / err
       if (done) return; done = true;
+      if (kind === 'cancel' || kind === 'timeout') aborted = true;   // M1: tell a still-in-flight importSspack not to activate the pack after we told the patron it stopped
       try { if (timer) clearInterval(timer); } catch (e) {}
       if (ov.parentNode) ov.parentNode.removeChild(ov);
       if (kind === 'ok') { if (cb) cb('ok'); return; }
@@ -9339,7 +9347,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     }
     importSspack(file, tier, function () { settle('ok'); }, function (err) {
       settle(err === 'quota' ? 'quota' : (err === 'blocked' ? 'blocked' : (err === 'truncated' ? 'truncated' : 'err')), tier);
-    });
+    }, function () { return aborted; });
   }
   // A ready-made CTA block (used inside every preview popup's "no images yet" state on mobile).
   function packSetupCTA(container, afterCb) {
