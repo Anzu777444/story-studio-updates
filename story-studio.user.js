@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.53
+// @version      1.0.54
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -6351,6 +6351,8 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     '.sf-nodiv .sst-sf-pal,.sf-nodiv .sst-sf-minis{gap:0}',
     '.sf-nodiv .sst-sf-tile,.sf-nodiv .sst-sf-mini{border-radius:0;border-color:transparent}',
     '.sst-sf-tile-fav{position:absolute;top:3px;right:4px;display:flex;gap:6px;z-index:2;font-size:14px;line-height:1;text-shadow:0 1px 3px rgba(0,0,0,.95)}',
+    '.sst-mg{cursor:pointer;line-height:1;filter:brightness(0) invert(1) drop-shadow(0 1px 1.5px rgba(0,0,0,.75));opacity:.5}',   /* the 🔍 preview icon: strip the emoji\'s blue/brown → flat transparent-white silhouette (user 2026-08-12), so it reads like the other white glyphs and stays unobtrusive */
+    '.sst-mg:hover{opacity:.85}',
     '.sst-sf-mini-wrap{display:flex;flex-direction:column;align-items:center;gap:2px}',
     '.sst-sf-w{display:inline-flex;align-items:center;gap:3px;margin-left:5px}',
     '.sst-sf-mini-wrap .sst-sf-w{margin-left:0}',
@@ -8149,7 +8151,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
         var chip = el('span', { class: 'sst-chip', style: dropped ? { opacity: '.5' } : null }, [t(spaceForm(n)),
           _partnered ? el('span', { class: 'hint', style: { fontSize: '10px', color: '#e0a64b', marginLeft: '4px' }, title: t('This pose needs a partner, so the frames it appears in will render with your Male character. Your other solo frames stay solo.'), text: t('renders with a partner') }) : null,
           positionWeightWidget(s, n, redraw),
-          _folderUsable() ? el('span', { title: t('See this position’s example pictures'), style: { cursor: 'pointer', fontSize: '13px', marginLeft: '4px' }, onclick: function (e) { e.stopPropagation(); openPositionPreview(n, redraw); } }, ['🔍']) : null,   // #19: touch tap affordance — contextmenu is dead on touch
+          _folderUsable() ? el('span', { class: 'sst-mg', title: t('See this position’s example pictures'), style: { fontSize: '13px', marginLeft: '4px' }, onclick: function (e) { e.stopPropagation(); openPositionPreview(n, redraw); } }, ['🔍']) : null,   // #19: preview affordance — contextmenu is dead on touch; transparent-white
           el('button', { title: t('remove'), onclick: function () { removePartPosition(s, n); if (!partPositions(s).length) { s.positionWeights = {}; s.positionWeights[NO_POS_KEY] = 100; if (!s.noPositionMode) s.noPositionMode = 'variety'; } _reconcilePositionWeights(s); saveDraft(); redraw(); } }, ['×'])]);   // (2026-07-14 Feature 2) removing the LAST position → 100% No-Position (natural look), not a fall-back to the full default set. Reversible via the removed-defaults restore row.
         chip.addEventListener('contextmenu', function (e) { e.preventDefault(); openPositionPreview(n, redraw); });   // (2026-07-14 Feature 4) right-click an inline position chip → its picture / cover picker (positions only; parity with the glance + palette tiles)
         chips.appendChild(chip);
@@ -8607,7 +8609,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     paint();
     tile._refreshImg = paint;   // moodWeightWidget calls this so the picture tracks the strength live
     if (removable) tile.appendChild(el('button', { class: 'sst-sf-mini-x', title: t('remove'), onclick: function (e) { e.stopPropagation(); onRemove(); } }, ['×']));
-    if (_folderUsable()) tile.appendChild(el('button', { class: 'sst-sf-mini-x', style: removable ? { left: '2px', right: 'auto' } : { right: '2px' }, title: t(kind === 'mood' ? 'See this mood’s example pictures' : 'See this position’s example pictures'), onpointerdown: function (e) { e.stopPropagation(); }, onclick: function (e) { e.stopPropagation(); if (kind === 'mood') openMoodPreview(key, _sfRefreshAll); else openPositionPreview(key, _sfRefreshAll); } }, ['🔍']));   // #15: touch tap affordance — contextmenu is dead on touch. Anchor to the LEFT corner when a × occupies the right, so it can't clip off a narrow (reduced-thumb-scale) tile.
+    if (_folderUsable()) tile.appendChild(el('span', { class: 'sst-mg', style: { position: 'absolute', top: '2px', left: '3px', zIndex: '2', fontSize: '12px' }, title: t(kind === 'mood' ? 'See this mood’s example pictures' : 'See this position’s example pictures'), onpointerdown: function (e) { e.stopPropagation(); }, onclick: function (e) { e.stopPropagation(); if (kind === 'mood') openMoodPreview(key, _sfRefreshAll); else openPositionPreview(key, _sfRefreshAll); } }, ['🔍']));   // #15: preview in the far TOP-LEFT corner, transparent-white (the × keeps the top-right). Left corner also avoids clipping on a narrow reduced-thumb tile.
     tile.addEventListener('contextmenu', function (e) { e.preventDefault(); if (kind === 'mood') openMoodPreview(key, _sfRefreshAll); else openPositionPreview(key, _sfRefreshAll); });
     return tile;
   }
@@ -8722,15 +8724,13 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       var tile = el('div', { class: 'sst-sf-tile', title: t('Drag onto a part · right-click to choose its picture') });
       tile.dataset.key = n; tile.dataset.kind = kind;
       tile.appendChild(el('span', { class: 'sst-sf-tile-lbl', text: t(spaceForm(n)) }));
-      var fav = palIsFav(kind, n), dis = palIsDis(kind, n);   // 🔍 preview + ★ / 👎 corner toggles (don't start a drag)
-      var _tclu = [];
-      if (_folderUsable()) _tclu.push(el('span', { title: t(kind === 'mood' ? 'See this mood’s example pictures' : 'See this position’s example pictures'), style: { cursor: 'pointer', fontSize: '13px' }, onclick: function (e) { e.stopPropagation(); if (kind === 'mood') openMoodPreview(n, _sfRefreshAll); else openPositionPreview(n, _sfRefreshAll); } }, ['🔍']));   // #15: contextmenu never fires on touch → tap affordance so the glance view's preview is reachable on phones/tablets
-      _tclu.push(
+      var fav = palIsFav(kind, n), dis = palIsDis(kind, n);   // 🔍 preview (top-LEFT corner) + ★ / 👎 / 📋 toggles (top-right; don't start a drag)
+      if (_folderUsable()) tile.appendChild(el('span', { class: 'sst-mg', style: { position: 'absolute', top: '3px', left: '4px', zIndex: '2', fontSize: '13px' }, title: t(kind === 'mood' ? 'See this mood’s example pictures' : 'See this position’s example pictures'), onpointerdown: function (e) { e.stopPropagation(); }, onclick: function (e) { e.stopPropagation(); if (kind === 'mood') openMoodPreview(n, _sfRefreshAll); else openPositionPreview(n, _sfRefreshAll); } }, ['🔍']));   // #15: preview lives in the far TOP-LEFT corner, transparent-white, so it's unobtrusive against the picture
+      tile.appendChild(el('div', { class: 'sst-sf-tile-fav', onpointerdown: function (e) { e.stopPropagation(); } }, [
         el('span', { title: t('Favorite'), style: { cursor: 'pointer', color: fav ? '#f5d76e' : '#e7e9f0' }, onclick: function (e) { e.stopPropagation(); palToggleFav(kind, n); buildPalette(); } }, [fav ? '★' : '☆']),
         el('span', { title: t('Dislike'), style: { cursor: 'pointer', fontSize: '12px', filter: dis ? 'none' : 'grayscale(1)', opacity: dis ? '1' : '.6' }, onclick: function (e) { e.stopPropagation(); palToggleDis(kind, n); buildPalette(); } }, ['👎']),
         el('span', { title: t('Save to a collection'), style: { cursor: 'pointer', fontSize: '12px', opacity: palListsWith(kind, n).length ? '1' : '.6' }, onclick: function (e) { e.stopPropagation(); openSaveToPlaylist(e.currentTarget, kind, n, buildPalette); } }, ['📋'])   // solid 📋 = this mood is saved in ≥1 playlist
-      );
-      tile.appendChild(el('div', { class: 'sst-sf-tile-fav', onpointerdown: function (e) { e.stopPropagation(); } }, _tclu));
+      ]));
       tile._load = function () {
         if (packActive()) {   // mobile pack → canvas tile (drag ghost falls back to the label, which is fine)
           _packClearEl(tile);
@@ -8763,7 +8763,23 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       else if (favFilter === 'hide') items = items.filter(function (n) { return !palIsDis(_pk, n); });
       else if (favFilter.indexOf('pl:') === 0) { var _pl = palListById(_pk, favFilter.slice(3)); if (!_pl) { favFilter = 'all'; } else { var _ps = {}; _pl.keys.forEach(function (k) { _ps[k] = 1; }); items = items.filter(function (n) { return _ps[n]; }); } }   // a custom playlist is just another filter — keep only its members (missing id → fall back to All)
       if (!items.length) { paletteGrid.appendChild(el('div', { class: 'hint', style: { gridColumn: '1/-1' }, text: t(favFilter.indexOf('pl:') === 0 ? 'This collection is empty — click the 📋 on any mood to add it here.' : 'Nothing matches your search.') })); return; }
-      items.forEach(function (n) { paletteGrid.appendChild(makeTile(n)); });
+      if (side === 'mood' && _sfGroupMoods && MOOD_GROUPS.length) {   // group the palette under the SAME theme dividers as the left panel (user 2026-08-12) — a flat wall of ~350 moods is where people get lost
+        var _pseen = {};
+        MOOD_GROUPS.forEach(function (grp) {
+          var members = items.filter(function (n) { return !_pseen[n] && (grp.moods || []).indexOf(n) >= 0; });   // first-group-wins so a mood never appears under two headers
+          if (!members.length) return;
+          members.forEach(function (n) { _pseen[n] = 1; });
+          paletteGrid.appendChild(el('div', { class: 'sst-pick-div sst-sf-grp', style: { gridColumn: '1/-1' }, text: t(grp.name) }));
+          members.forEach(function (n) { paletteGrid.appendChild(makeTile(n)); });
+        });
+        var _prest = items.filter(function (n) { return !_pseen[n]; });   // un-themed / brand-new moods
+        if (_prest.length) {
+          paletteGrid.appendChild(el('div', { class: 'sst-pick-div sst-sf-grp', style: { gridColumn: '1/-1' }, text: t('Other') }));
+          _prest.forEach(function (n) { paletteGrid.appendChild(makeTile(n)); });
+        }
+      } else {
+        items.forEach(function (n) { paletteGrid.appendChild(makeTile(n)); });
+      }
     }
     var mainTabs = el('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } });
     var subTabs = el('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } });
@@ -8841,7 +8857,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       sfToggleBtn('▦ ' + t('Dividers: on'), '▦ ' + t('Dividers: off'), function () { return dividers; }, function (v) { dividers = v; sv('sf_dividers', v); box.classList.toggle('sf-nodiv', !v); }),
       // 🗂️ Group the left-panel MOODS under their theme dividers (same groups as the Add-a-mood picker),
       // orthogonal to the tile-gap Dividers toggle above. Structural change → set() rebuilds the left panel.
-      sfToggleBtn('🗂️ ' + t('Group moods by theme: on'), '🗂️ ' + t('Group moods by theme: off'), function () { return _sfGroupMoods; }, function (v) { _sfGroupMoods = v; sv('sf_group_moods', v); buildLeft(); })
+      sfToggleBtn('🗂️ ' + t('Group moods by theme: on'), '🗂️ ' + t('Group moods by theme: off'), function () { return _sfGroupMoods; }, function (v) { _sfGroupMoods = v; sv('sf_group_moods', v); buildLeft(); buildPalette(); })   // group BOTH panels — the right-hand mood palette is where a flat ~350-mood wall gets overwhelming (user 2026-08-12)
     ]);
     var modal = el('div', { class: 'sst-modal', style: { width: '100vw', maxWidth: '100vw', height: '100vh', maxHeight: '100vh', borderRadius: '0', margin: '0', display: 'flex', flexDirection: 'column' } }, [
       el('div', { class: 'sst-head' }, [
@@ -10562,8 +10578,8 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
         var fav = isFav(n);
         var _sh = th ? '0 1px 3px rgba(0,0,0,.9)' : 'none';
         var _clu = [];
-        if (_folderUsable()) _clu.push(el('span', { title: t('See this mood’s example pictures'), style: { cursor: 'pointer', fontSize: '15px', lineHeight: '1', color: th ? '#e8ecff' : '#8a90a6', textShadow: _sh },
-          onclick: function (e) { e.stopPropagation(); openMoodPreview(n, function () { drawGrid(curQ); }); } }, ['🔍']));   // #4: tap affordance — contextmenu never fires on touch, so tablet/phone patrons need a button to open the example-image modal
+        if (_folderUsable()) _clu.push(el('span', { class: 'sst-mg', title: t('See this mood’s example pictures'), style: { fontSize: '15px' },
+          onclick: function (e) { e.stopPropagation(); openMoodPreview(n, function () { drawGrid(curQ); }); } }, ['🔍']));   // #4: preview affordance — contextmenu never fires on touch; transparent-white so it doesn't dominate the card
         // #6 perf: ★/👎/📋 update in place. A full drawGrid() here tears down and rebuilds all ~348 option
         // cards (and, in pack mode, all ~348 canvases) just to recolor one icon — a real freeze + scroll-jump
         // on a phone. Only rebuild when the ACTIVE filter keys on the toggled flag (so membership changed).
@@ -10607,8 +10623,8 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       if (moodOpts) opt.addEventListener('contextmenu', function (e) { e.preventDefault(); openMoodPreview(n, function () { drawGrid(curQ); }); });   // right-click a mood → 9-image preview; picking a cover redraws the list live
       else if (posPreview) {
         opt.addEventListener('contextmenu', function (e) { e.preventDefault(); openPositionPreview(n); });   // right-click a position → its example images
-        if (_folderUsable()) opt.appendChild(el('span', { title: t('See this position’s example pictures'), style: { position: 'absolute', top: '7px', right: '9px', zIndex: '2', cursor: 'pointer', fontSize: '15px', lineHeight: '1', color: posImg ? '#e8ecff' : '#8a90a6', textShadow: posImg ? '0 1px 3px rgba(0,0,0,.9)' : 'none' },
-          onclick: function (e) { e.stopPropagation(); openPositionPreview(n); } }, ['🔍']));   // #4: touch tap affordance — contextmenu never fires on touch
+        if (_folderUsable()) opt.appendChild(el('span', { class: 'sst-mg', title: t('See this position’s example pictures'), style: { position: 'absolute', top: '7px', right: '9px', zIndex: '2', fontSize: '15px' },
+          onclick: function (e) { e.stopPropagation(); openPositionPreview(n); } }, ['🔍']));   // #4: preview affordance — contextmenu never fires on touch; transparent-white
       }
       grid.appendChild(opt);
     }
