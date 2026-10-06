@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Patreon Post Organizer — Story Studio Edition
 // @namespace    anzu777.post.organizer.studio
-// @version      1.0.57
+// @version      1.0.58
 // @description  Browse a creator's Patreon posts grouped by month OR by Collection — search, filter by tier, sort, page/thumbnail size, grid/list with alignment/shape/density, full screen. Deeply themeable panel: 18 color presets, 10 animated "fancy" effects (rain/stars/aurora/neon/matrix…), 10 hand-painted animated SVG scenes (Tokyo neon, sakura shrine, deep space, aurora peaks, anime rooftop, pokéball meadow…), plus a custom color/font/glass editor with save-your-own presets. Fully customizable floating button: rename it, pick from 600+ emojis (incl. a big anime/kawaii/Japanese/fantasy set), set a custom cropped image (square/circle/whole, zoom+pan), size the image & text, recolor the text, and go transparent. Loads light — only the page you're looking at is drawn.
 // @author       Anzu777
 // @match        https://www.patreon.com/*
@@ -11021,7 +11021,7 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
     //    the grid (flex:1, min-height:0) got what was left: nothing. On a phone the popup is full screen; the rows fold
     //    into ONE "⚙️ Options" panel beside the search, closed, and it closes itself once the pictures are scrolled; the
     //    Options button is lit while a filter is on, so nothing is hidden by surprise; "🖼️ Pictures only" takes the
-    //    ⭐👎📋🔍 and strength buttons off the pictures (remembered; one tap brings them back); Done also sits at the
+    //    ⭐👎📋🔍 and strength buttons off the pictures (off by default; remembered once chosen); Done also sits at the
     //    bottom, under the thumb. A computer keeps the layout it had. ──
     var _tools = (moodOpts ? [exprRow, tabRow, favRow, previewRow, thumbAllRow] : (posPreview ? [previewRow, posThumbAllRow] : [])).filter(Boolean);
     var phone = _phonePick();
@@ -11032,7 +11032,9 @@ var STUDIO_DATA = {"_meta":{"schema_version":2,"v2_only":true,"notes":"Patron St
       var pkOpt = el('button', { class: 'sst-btn sm sst-pk-opt', type: 'button', 'aria-expanded': 'false' });
       var pkSetDrawer = function (open) { pkDrawer.hidden = !open; pkOpt.setAttribute('aria-expanded', open ? 'true' : 'false'); _pkSync(); };
       pkOpt.addEventListener('click', function () { pkSetDrawer(pkDrawer.hidden); });
-      var pkClean = gv('pick_clean', true) !== false;
+      // The buttons stay on the pictures unless the member chooses Pictures only (owner, 2026-10-06: "I want the button on
+      // option to be on by default"); the choice is remembered on this device.
+      var pkClean = gv('pick_clean', false) === true;
       var pkCleanBtn = el('button', { class: 'sst-btn sm sst-pk-clean-btn', type: 'button', title: t('Show the pictures without the buttons on them') });
       pkCleanBtn.addEventListener('click', function () { pkClean = !pkClean; sv('pick_clean', pkClean); _pkSync(); });
       var pkCount = el('span', { class: 'sst-pk-count' });
